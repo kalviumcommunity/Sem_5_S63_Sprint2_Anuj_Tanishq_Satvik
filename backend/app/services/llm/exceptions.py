@@ -67,3 +67,26 @@ class StructuredOutputValidationError(LLMResponseError):
             return f"{base} | Details: [{err_details}]"
         return base
 
+
+class MissingPromptVariableError(LLMException):
+    """Raised when rendering a prompt template with missing required variables."""
+
+    def __init__(self, template_id: str, missing_vars: list, version: str = "unknown"):
+        vars_str = ", ".join(f"'{v}'" for v in sorted(missing_vars))
+        msg = f"Prompt template '{template_id}' (v{version}) missing required variable(s): {vars_str}"
+        super().__init__(msg, provider="prompt_template")
+        self.template_id = template_id
+        self.missing_vars = missing_vars
+        self.version = version
+
+
+class PromptTemplateNotFoundError(LLMException):
+    """Raised when a requested prompt template is not found in the registry."""
+
+    def __init__(self, template_id: str, version: str = None):
+        ver_str = f" with version '{version}'" if version else ""
+        super().__init__(f"Prompt template '{template_id}'{ver_str} not found in registry", provider="prompt_template")
+        self.template_id = template_id
+        self.version = version
+
+
