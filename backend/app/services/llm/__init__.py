@@ -9,6 +9,12 @@ from backend.app.services.llm.exceptions import (
     LLMResponseError,
     LLMProviderError,
 )
+from backend.app.services.llm.cost import (
+    TokenUsage,
+    TokenCostEstimator,
+    token_cost_estimator,
+    MODEL_PRICING_PER_MILLION,
+)
 from backend.app.services.llm.client import (
     LLMClientInterface,
     MockLLMClient,
@@ -37,6 +43,10 @@ __all__ = [
     "LLMTimeoutError",
     "LLMResponseError",
     "LLMProviderError",
+    "TokenUsage",
+    "TokenCostEstimator",
+    "token_cost_estimator",
+    "MODEL_PRICING_PER_MILLION",
     "LLMClientInterface",
     "MockLLMClient",
     "OpenAILLMClient",

@@ -57,20 +57,24 @@ class RAGPipeline:
 
         # Construct structured prompt bundle separating system, context, and query
         prompt_bundle = build_academic_rag_prompt(query=query, context=context_str)
-        raw_response = await self.llm.generate(
+        completion = await self.llm.complete(
             prompt=prompt_bundle.user_query,
             system_prompt=prompt_bundle.system_prompt,
             messages=prompt_bundle.to_api_messages(),
         )
 
-        parsed = ResponseParser.parse(raw_response)
+        parsed = ResponseParser.parse(completion.text)
         citations = self.citation_service.validate(parsed, reranked)
 
         latency = round((time.time() - start_time) * 1000, 2)
+        usage_dict = completion.token_usage.to_dict() if completion.token_usage else None
+
         return QueryResponse(
             answer=parsed.answer,
             citations=citations,
             grounded=not parsed.is_refusal,
             conversation_id=conversation_id,
             latency_ms=latency,
+            token_usage=usage_dict,
+            estimated_cost_usd=completion.estimated_cost_usd,
         )
