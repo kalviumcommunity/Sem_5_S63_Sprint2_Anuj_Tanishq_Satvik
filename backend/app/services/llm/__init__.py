@@ -1,9 +1,19 @@
 """LLM module exports."""
 
+from backend.app.services.llm.types import LLMConfig, CompletionResponse
+from backend.app.services.llm.exceptions import (
+    LLMException,
+    LLMAuthenticationError,
+    LLMRateLimitError,
+    LLMTimeoutError,
+    LLMResponseError,
+    LLMProviderError,
+)
 from backend.app.services.llm.client import (
     LLMClientInterface,
     MockLLMClient,
     OpenAILLMClient,
+    GeminiLLMClient,
     get_llm_client,
 )
 from backend.app.services.llm.prompts import (
@@ -13,9 +23,18 @@ from backend.app.services.llm.prompts import (
 from backend.app.services.llm.parser import ResponseParser, ParsedResponse
 
 __all__ = [
+    "LLMConfig",
+    "CompletionResponse",
+    "LLMException",
+    "LLMAuthenticationError",
+    "LLMRateLimitError",
+    "LLMTimeoutError",
+    "LLMResponseError",
+    "LLMProviderError",
     "LLMClientInterface",
     "MockLLMClient",
     "OpenAILLMClient",
+    "GeminiLLMClient",
     "get_llm_client",
     "ACADEMIC_RAG_SYSTEM_PROMPT",
     "build_rag_user_prompt",
