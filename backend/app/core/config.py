@@ -68,6 +68,11 @@ class Settings(BaseSettings):
         "I couldn't find enough supporting information in the available academic sources to answer this reliably."
     )
 
+    # Conversation Context Window Management
+    MAX_HISTORY_TURNS: int = 5
+    MAX_HISTORY_TOKENS: int = 1500
+    MAX_CONTEXT_WINDOW_TOKENS: int = 4000
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
