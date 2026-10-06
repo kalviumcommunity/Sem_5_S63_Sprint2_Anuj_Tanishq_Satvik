@@ -200,6 +200,23 @@ pytest
 ```
 
 ---
+
+## 👥 Team & GitHub Workflow
+
+ResearchMate is engineered by a 3-member team (**Anuj, Tanishq, Satvik**). For full engineering conventions, branch guidelines, and review standards, refer to [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Branching Strategy
+- **`main`**: Protected production branch. Deployed releases only.
+- **`develop`**: Central integration branch for ongoing sprint concepts.
+- **`feature/<concept-id>-<description>`**: Isolated feature branches (e.g., `feature/02-github-workflow`).
+- **`bugfix/<description>`** / **`hotfix/<description>`**: Defect resolution branches.
+
+### Commit & PR Policy
+- Standard: [Conventional Commits v1.0.0](https://www.conventionalcommits.org/) (`feat`, `fix`, `docs`, `chore`, `test`, `refactor`).
+- Pull Requests require passing test suites and at least **1 peer review approval**.
+- Mandatory compliance with the core principle: *"No unsupported answer. No hidden source."*
+
+---
 ## 📊 Success Metrics
 
 The primary success metric is:
