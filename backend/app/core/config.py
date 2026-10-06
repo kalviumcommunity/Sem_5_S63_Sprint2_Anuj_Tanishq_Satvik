@@ -1,6 +1,6 @@
 """Core application configuration using Pydantic Settings."""
 
-from typing import List, Union
+from typing import List, Optional, Union
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "gpt-4o-mini"
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 1024
+    LLM_TOP_P: float = 1.0
+    LLM_SEED: Optional[int] = 42
+    LLM_TIMEOUT_SECONDS: float = 30.0
+    LLM_RESPONSE_FORMAT: str = "text"
+    LLM_MAX_RETRIES: int = 2
 
     # Embedding Settings
     EMBEDDING_PROVIDER: str = "openai"
