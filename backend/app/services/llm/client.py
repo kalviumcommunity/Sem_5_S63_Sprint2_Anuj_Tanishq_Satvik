@@ -135,13 +135,15 @@ class OpenAILLMClient(LLMClientInterface):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        messages = [
-            {"role": "system", "content": system_prompt or ACADEMIC_RAG_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ]
+        api_messages = kwargs.get("messages")
+        if not api_messages:
+            api_messages = [
+                {"role": "system", "content": system_prompt or ACADEMIC_RAG_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
         payload = {
             "model": self.config.model,
-            "messages": messages,
+            "messages": api_messages,
             "temperature": temperature if temperature is not None else self.config.temperature,
             "max_tokens": max_tokens if max_tokens is not None else self.config.max_tokens,
         }

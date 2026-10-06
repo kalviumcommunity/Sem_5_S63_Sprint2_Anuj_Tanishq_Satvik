@@ -8,6 +8,7 @@ from backend.app.schemas.response import QueryResponse
 from backend.app.services.llm.client import get_llm_client
 from backend.app.services.llm.prompts import (
     ACADEMIC_RAG_SYSTEM_PROMPT,
+    build_academic_rag_prompt,
     build_rag_user_prompt,
 )
 from backend.app.services.llm.parser import ResponseParser
@@ -54,11 +55,12 @@ class RAGPipeline:
         # Build context preserving metadata
         context_str = self.context_builder.build(reranked)
 
-        # Construct prompt and invoke LLM
-        user_prompt = build_rag_user_prompt(query, context_str)
+        # Construct structured prompt bundle separating system, context, and query
+        prompt_bundle = build_academic_rag_prompt(query=query, context=context_str)
         raw_response = await self.llm.generate(
-            prompt=user_prompt,
-            system_prompt=ACADEMIC_RAG_SYSTEM_PROMPT,
+            prompt=prompt_bundle.user_query,
+            system_prompt=prompt_bundle.system_prompt,
+            messages=prompt_bundle.to_api_messages(),
         )
 
         parsed = ResponseParser.parse(raw_response)
