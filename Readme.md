@@ -147,9 +147,59 @@ The first version focuses on the core research experience:
            ↓
     Answer + Citations
 ```
-
 ---
 
+## 💻 Development & Setup
+
+### Prerequisites
+- Python 3.10+ (tested with Python 3.12)
+- Git
+
+### Installation
+1. **Clone the repository and checkout the feature branch**:
+   ```bash
+   git clone https://github.com/kalviumcommunity/Sem_5_S63_Sprint2_Anuj_Tanishq_Satvik.git
+   cd Sem_5_S63_Sprint2_Anuj_Tanishq_Satvik
+   git checkout feature/01-environment-setup
+   ```
+
+2. **Create and activate a virtual environment**:
+   ```bash
+   # Windows (PowerShell):
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+
+   # Linux / macOS:
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+3. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Configure environment variables**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your LLM/Embedding API keys if available
+   ```
+
+### Running the Backend Server
+```bash
+uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+```
+- **API Documentation (Swagger UI)**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+- **Health Check**: [http://localhost:8000/health](http://localhost:8000/health) or [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)
+
+### Running Tests
+Execute the full test suite with pytest:
+```bash
+pytest
+```
+
+---
 ## 📊 Success Metrics
 
 The primary success metric is:
