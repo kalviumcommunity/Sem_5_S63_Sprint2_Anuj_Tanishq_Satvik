@@ -38,3 +38,32 @@ class LLMResponseError(LLMException):
 class LLMProviderError(LLMException):
     """Raised when the LLM provider experiences internal server errors (5xx)."""
     pass
+
+
+class StructuredOutputValidationError(LLMResponseError):
+    """Raised when structured LLM output is malformed JSON or fails schema validation."""
+
+    def __init__(
+        self,
+        message: str,
+        raw_output: str = "",
+        validation_errors: list = None,
+        error_type: str = "validation_error",
+        provider: str = "unknown",
+        status_code: int = None,
+    ):
+        super().__init__(message, provider=provider, status_code=status_code)
+        self.raw_output = raw_output
+        self.validation_errors = validation_errors or []
+        self.error_type = error_type
+
+    def __str__(self) -> str:
+        base = super().__str__()
+        if self.validation_errors:
+            err_details = "; ".join(
+                f"{'.'.join(str(p) for p in err.get('loc', []))}: {err.get('msg', '')}"
+                for err in self.validation_errors[:3]
+            )
+            return f"{base} | Details: [{err_details}]"
+        return base
+
