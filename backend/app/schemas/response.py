@@ -24,6 +24,8 @@ class QueryResponse(BaseModel):
     grounded: bool = True
     conversation_id: Optional[str] = None
     latency_ms: Optional[float] = None
+    token_usage: Optional[Dict[str, Any]] = None
+    estimated_cost_usd: Optional[float] = None
 
 
 class HealthResponse(BaseModel):

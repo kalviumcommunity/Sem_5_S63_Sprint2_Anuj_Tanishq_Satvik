@@ -15,6 +15,7 @@ from backend.app.services.llm.exceptions import (
     LLMResponseError,
     LLMTimeoutError,
 )
+from backend.app.services.llm.cost import TokenUsage, token_cost_estimator
 from backend.app.services.llm.prompts import ACADEMIC_RAG_SYSTEM_PROMPT
 from backend.app.services.llm.types import CompletionResponse, LLMConfig
 
@@ -85,16 +86,34 @@ class MockLLMClient(LLMClientInterface):
         )
 
         latency = (time.perf_counter() - start_time) * 1000
-        prompt_words = len(prompt.split())
-        comp_words = len(text.split())
+        prompt_tokens = token_cost_estimator.estimate_tokens(prompt, model=self.config.model, provider="mock")
+        comp_tokens = token_cost_estimator.estimate_tokens(text, model=self.config.model, provider="mock")
+        usage = token_cost_estimator.create_usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=comp_tokens,
+            model=self.config.model,
+            provider="mock",
+        )
+
+        logger.info(
+            "LLM Completion [mock/%s]: %d prompt + %d comp = %d total tokens | Cost: $%.6f | Latency: %.2fms",
+            self.config.model,
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            usage.total_tokens,
+            usage.estimated_cost_usd,
+            latency,
+        )
 
         return CompletionResponse(
             text=text,
             model=self.config.model,
             provider="mock",
-            prompt_tokens=prompt_words,
-            completion_tokens=comp_words,
-            total_tokens=prompt_words + comp_words,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            estimated_cost_usd=usage.estimated_cost_usd,
+            token_usage=usage,
             finish_reason="stop",
             latency_ms=round(latency, 2),
             raw_response={"mock": True},
@@ -197,14 +216,38 @@ class OpenAILLMClient(LLMClientInterface):
         try:
             data = response.json()
             choice = data["choices"][0]
-            usage = data.get("usage", {})
-            return CompletionResponse(
-                text=choice["message"]["content"],
-                model=data.get("model", self.config.model),
+            raw_usage = data.get("usage", {})
+            model_name = data.get("model", self.config.model)
+            text_content = choice["message"]["content"]
+
+            p_tokens = raw_usage.get("prompt_tokens") or token_cost_estimator.estimate_tokens(prompt, model=model_name, provider="openai")
+            c_tokens = raw_usage.get("completion_tokens") or token_cost_estimator.estimate_tokens(text_content, model=model_name, provider="openai")
+            usage_record = token_cost_estimator.create_usage(
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+                model=model_name,
                 provider="openai",
-                prompt_tokens=usage.get("prompt_tokens", 0),
-                completion_tokens=usage.get("completion_tokens", 0),
-                total_tokens=usage.get("total_tokens", 0),
+            )
+
+            logger.info(
+                "LLM Completion [openai/%s]: %d prompt + %d comp = %d total tokens | Cost: $%.6f | Latency: %.2fms",
+                model_name,
+                usage_record.prompt_tokens,
+                usage_record.completion_tokens,
+                usage_record.total_tokens,
+                usage_record.estimated_cost_usd,
+                latency_ms,
+            )
+
+            return CompletionResponse(
+                text=text_content,
+                model=model_name,
+                provider="openai",
+                prompt_tokens=usage_record.prompt_tokens,
+                completion_tokens=usage_record.completion_tokens,
+                total_tokens=usage_record.total_tokens,
+                estimated_cost_usd=usage_record.estimated_cost_usd,
+                token_usage=usage_record,
                 finish_reason=choice.get("finish_reason", "stop"),
                 latency_ms=round(latency_ms, 2),
                 raw_response=data,
@@ -303,14 +346,36 @@ class GeminiLLMClient(LLMClientInterface):
             data = response.json()
             candidate = data["candidates"][0]
             part_text = candidate["content"]["parts"][0]["text"]
-            usage = data.get("usageMetadata", {})
+            raw_usage = data.get("usageMetadata", {})
+
+            p_tokens = raw_usage.get("promptTokenCount") or token_cost_estimator.estimate_tokens(prompt, model=self.config.model, provider="gemini")
+            c_tokens = raw_usage.get("candidatesTokenCount") or token_cost_estimator.estimate_tokens(part_text, model=self.config.model, provider="gemini")
+            usage_record = token_cost_estimator.create_usage(
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+                model=self.config.model,
+                provider="gemini",
+            )
+
+            logger.info(
+                "LLM Completion [gemini/%s]: %d prompt + %d comp = %d total tokens | Cost: $%.6f | Latency: %.2fms",
+                self.config.model,
+                usage_record.prompt_tokens,
+                usage_record.completion_tokens,
+                usage_record.total_tokens,
+                usage_record.estimated_cost_usd,
+                latency_ms,
+            )
+
             return CompletionResponse(
                 text=part_text,
                 model=self.config.model,
                 provider="gemini",
-                prompt_tokens=usage.get("promptTokenCount", 0),
-                completion_tokens=usage.get("candidatesTokenCount", 0),
-                total_tokens=usage.get("totalTokenCount", 0),
+                prompt_tokens=usage_record.prompt_tokens,
+                completion_tokens=usage_record.completion_tokens,
+                total_tokens=usage_record.total_tokens,
+                estimated_cost_usd=usage_record.estimated_cost_usd,
+                token_usage=usage_record,
                 finish_reason=candidate.get("finishReason", "STOP"),
                 latency_ms=round(latency_ms, 2),
                 raw_response=data,

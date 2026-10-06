@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
+from backend.app.services.llm.cost import TokenUsage
 
 
 class LLMConfig(BaseModel):
@@ -24,6 +25,8 @@ class CompletionResponse(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    token_usage: Optional[TokenUsage] = None
     finish_reason: Optional[str] = "stop"
     latency_ms: float = 0.0
     raw_response: Optional[Dict[str, Any]] = None

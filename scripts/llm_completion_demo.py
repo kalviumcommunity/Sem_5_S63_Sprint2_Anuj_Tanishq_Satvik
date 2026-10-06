@@ -71,6 +71,7 @@ async def run_demo(
         print(f"Prompt Tokens:      {response.prompt_tokens}")
         print(f"Completion Tokens:  {response.completion_tokens}")
         print(f"Total Tokens:       {response.total_tokens}")
+        print(f"Estimated Cost:     ${response.estimated_cost_usd:.6f} USD")
         print(f"Finish Reason:      {response.finish_reason}")
         print(f"Latency:            {response.latency_ms:.2f} ms")
         print("\nOutput Text:\n")
