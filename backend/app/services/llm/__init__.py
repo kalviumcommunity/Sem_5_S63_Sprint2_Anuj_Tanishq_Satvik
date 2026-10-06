@@ -17,7 +17,13 @@ from backend.app.services.llm.client import (
     get_llm_client,
 )
 from backend.app.services.llm.prompts import (
+    PromptRole,
+    PromptMessage,
+    PromptBundle,
+    PromptBuilder,
+    RESEARCHMATE_SYSTEM_PROMPT,
     ACADEMIC_RAG_SYSTEM_PROMPT,
+    build_academic_rag_prompt,
     build_rag_user_prompt,
 )
 from backend.app.services.llm.parser import ResponseParser, ParsedResponse
@@ -36,7 +42,13 @@ __all__ = [
     "OpenAILLMClient",
     "GeminiLLMClient",
     "get_llm_client",
+    "PromptRole",
+    "PromptMessage",
+    "PromptBundle",
+    "PromptBuilder",
+    "RESEARCHMATE_SYSTEM_PROMPT",
     "ACADEMIC_RAG_SYSTEM_PROMPT",
+    "build_academic_rag_prompt",
     "build_rag_user_prompt",
     "ResponseParser",
     "ParsedResponse",
