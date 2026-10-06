@@ -12,22 +12,25 @@ from backend.app.services.llm.prompts import (
     build_rag_user_prompt,
 )
 from backend.app.services.llm.parser import ResponseParser
+from backend.app.models.conversation import MessageRole
 from backend.app.services.retrieval.search import SearchResult
 from backend.app.services.retrieval.reranker import Reranker
 from backend.app.services.rag.context import ContextBuilder
 from backend.app.services.rag.grounding import GroundingService
 from backend.app.services.rag.citations import CitationService
+from backend.app.services.conversations.manager import ConversationContextManager
 
 
 class RAGPipeline:
     """Coordinates retrieval, reranking, context assembly, LLM answering, and citation validation."""
 
-    def __init__(self):
+    def __init__(self, conversation_manager: Optional[ConversationContextManager] = None):
         self.llm = get_llm_client()
         self.grounding = GroundingService()
         self.reranker = Reranker()
         self.context_builder = ContextBuilder()
         self.citation_service = CitationService()
+        self.conversation_manager = conversation_manager or ConversationContextManager()
 
     async def answer(
         self,
@@ -55,8 +58,12 @@ class RAGPipeline:
         # Build context preserving metadata
         context_str = self.context_builder.build(reranked)
 
-        # Construct structured prompt bundle separating system, context, and query
-        prompt_bundle = build_academic_rag_prompt(query=query, context=context_str)
+        # Construct structured prompt bundle respecting context window and history budget
+        prompt_bundle = self.conversation_manager.assemble_prompt_bundle(
+            current_query=query,
+            retrieved_context=context_str,
+            conv_id=conversation_id,
+        )
         completion = await self.llm.complete(
             prompt=prompt_bundle.user_query,
             system_prompt=prompt_bundle.system_prompt,
@@ -65,6 +72,11 @@ class RAGPipeline:
 
         parsed = ResponseParser.parse(completion.text)
         citations = self.citation_service.validate(parsed, reranked)
+
+        # Record conversation turns for follow-up inquiry memory
+        if conversation_id:
+            self.conversation_manager.add_message(conversation_id, MessageRole.USER, query)
+            self.conversation_manager.add_message(conversation_id, MessageRole.ASSISTANT, parsed.answer)
 
         latency = round((time.time() - start_time) * 1000, 2)
         usage_dict = completion.token_usage.to_dict() if completion.token_usage else None
