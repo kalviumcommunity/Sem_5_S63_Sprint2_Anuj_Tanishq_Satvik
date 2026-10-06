@@ -178,3 +178,30 @@ def build_rag_user_prompt(query: str, context: str) -> str:
     # Return user message portion including context
     non_system = [m.content for m in bundle.messages if m.role != PromptRole.SYSTEM]
     return "\n\n".join(non_system)
+
+
+def build_structured_rag_prompt(
+    query: str,
+    context: str,
+    schema_cls: Optional[Any] = None,
+    history: Optional[List[Message]] = None,
+    system_prompt: Optional[str] = None,
+) -> PromptBundle:
+    """Convenience factory function for building academic RAG prompts requiring structured JSON."""
+    from backend.app.schemas.response import StructuredResearchResponse
+    from backend.app.services.llm.parser import StructuredOutputParser
+
+    target_schema = schema_cls or StructuredResearchResponse
+    schema_instruction = StructuredOutputParser.generate_schema_prompt(target_schema)
+
+    base_sys = system_prompt or RESEARCHMATE_SYSTEM_PROMPT
+    combined_system = f"{base_sys}\n\n{schema_instruction}"
+
+    builder = PromptBuilder(system_prompt=combined_system)
+    if context:
+        builder.add_context_message(context)
+    if history:
+        builder.add_conversation_history(history)
+    builder.add_user_message(query)
+    return builder.build()
+

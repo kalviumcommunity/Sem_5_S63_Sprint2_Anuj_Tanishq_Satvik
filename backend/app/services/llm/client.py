@@ -1,12 +1,15 @@
 """Reusable LLM client abstraction layer supporting multiple providers."""
 
 from abc import ABC, abstractmethod
+import json
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple, Type, TypeVar
 import httpx
+from pydantic import BaseModel
 
 from backend.app.core.config import settings
 from backend.app.core.logging import logger
+from backend.app.schemas.response import StructuredResearchResponse
 from backend.app.services.llm.exceptions import (
     LLMAuthenticationError,
     LLMException,
@@ -14,10 +17,14 @@ from backend.app.services.llm.exceptions import (
     LLMRateLimitError,
     LLMResponseError,
     LLMTimeoutError,
+    StructuredOutputValidationError,
 )
 from backend.app.services.llm.cost import TokenUsage, token_cost_estimator
 from backend.app.services.llm.prompts import ACADEMIC_RAG_SYSTEM_PROMPT
 from backend.app.services.llm.types import CompletionResponse, LLMConfig
+from backend.app.services.llm.parser import StructuredOutputParser
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class LLMClientInterface(ABC):
@@ -53,9 +60,50 @@ class LLMClientInterface(ABC):
         )
         return resp.text
 
+    async def complete_structured(
+        self,
+        prompt: str,
+        schema_cls: Type[T] = StructuredResearchResponse,
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Tuple[T, CompletionResponse]:
+        """Execute completion requesting structured JSON output and strictly validate against schema_cls.
+
+        Never silently accepts invalid or malformed structured outputs.
+        """
+        # Enforce json_object mode in provider payload where supported
+        kwargs["response_format"] = "json_object"
+
+        # Append schema formatting guidelines to system prompt
+        schema_instruction = StructuredOutputParser.generate_schema_prompt(schema_cls)
+        effective_system = (
+            f"{system_prompt}\n\n{schema_instruction}"
+            if system_prompt
+            else schema_instruction
+        )
+
+        resp = await self.complete(
+            prompt=prompt,
+            system_prompt=effective_system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+
+        validated_model = StructuredOutputParser.parse_and_validate(
+            raw_text=resp.text,
+            schema_cls=schema_cls,
+            provider=getattr(self, "provider_name", "llm"),
+        )
+        return validated_model, resp
+
 
 class MockLLMClient(LLMClientInterface):
     """Deterministic mock LLM client for offline development and testing."""
+
+    provider_name: str = "mock"
 
     def __init__(self, config: Optional[LLMConfig] = None, simulate_error: Optional[str] = None):
         self.config = config or LLMConfig(model="mock-academic-v1")
@@ -79,18 +127,49 @@ class MockLLMClient(LLMClientInterface):
             raise LLMRateLimitError("Mock rate limit exceeded", provider="mock", status_code=429)
 
         resp_format = kwargs.get("response_format", getattr(self.config, "response_format", "text"))
-        if resp_format == "json_object":
-            text = (
-                '{"answer": "Based on the provided academic sources, federated learning is a distributed '
-                'machine learning technique where model training occurs across decentralized edge devices '
-                'without centralizing raw user data.", "citations": [{"document": "Federated Learning Survey", "page": 8}]}'
-            )
+
+        if self.simulate_error == "invalid_json":
+            text = "Here is the answer: { invalid_json: missing_quotes, "
+        elif self.simulate_error == "invalid_schema":
+            text = json.dumps({"citations": [], "evidence_status": "sufficient"})  # Missing required 'answer'
+        elif resp_format == "json_object":
+            text = json.dumps({
+                "answer": (
+                    "Based on the provided academic sources, federated learning is a distributed "
+                    "machine learning technique where model training occurs across decentralized edge devices "
+                    "without centralizing raw user data."
+                ),
+                "citations": [
+                    {
+                        "source": "Federated Learning Survey",
+                        "page": 8,
+                        "chunk_id": "chunk_001",
+                        "quote": "Model training occurs across decentralized edge devices without centralizing raw user data.",
+                        "relevance_explanation": "Defines core architecture of federated learning.",
+                    }
+                ],
+                "evidence_status": "sufficient",
+                "confidence": 0.98,
+                "source_references": [
+                    {
+                        "document_id": "doc_fl_survey_2024",
+                        "title": "Federated Learning Survey",
+                        "page": 8,
+                        "chunk_id": "chunk_001",
+                        "section": "Architecture Overview",
+                        "snippet": "Model training occurs across decentralized edge devices without centralizing raw user data.",
+                    }
+                ],
+                "limitations": None,
+                "refusal_reason": None,
+            })
         else:
             text = (
                 "Based on the provided academic sources, federated learning is a distributed machine learning "
                 "technique where model training occurs across decentralized edge devices without centralizing "
                 "raw user data [Doc: Federated Learning Survey, Page: 8]."
             )
+
 
         latency = (time.perf_counter() - start_time) * 1000
         prompt_tokens = token_cost_estimator.estimate_tokens(prompt, model=self.config.model, provider="mock")
@@ -129,6 +208,8 @@ class MockLLMClient(LLMClientInterface):
 
 class OpenAILLMClient(LLMClientInterface):
     """OpenAI Chat Completion API client."""
+
+    provider_name: str = "openai"
 
     def __init__(self, config: Optional[LLMConfig] = None, api_key: Optional[str] = None):
         self.config = config or LLMConfig.from_settings()
@@ -283,6 +364,8 @@ class OpenAILLMClient(LLMClientInterface):
 
 class GeminiLLMClient(LLMClientInterface):
     """Google Gemini REST API client."""
+
+    provider_name: str = "gemini"
 
     def __init__(self, config: Optional[LLMConfig] = None, api_key: Optional[str] = None):
         self.config = config or LLMConfig.from_settings()

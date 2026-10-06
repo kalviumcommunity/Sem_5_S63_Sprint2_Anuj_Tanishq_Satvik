@@ -8,6 +8,7 @@ from backend.app.services.llm.exceptions import (
     LLMTimeoutError,
     LLMResponseError,
     LLMProviderError,
+    StructuredOutputValidationError,
 )
 from backend.app.services.llm.cost import (
     TokenUsage,
@@ -31,8 +32,19 @@ from backend.app.services.llm.prompts import (
     ACADEMIC_RAG_SYSTEM_PROMPT,
     build_academic_rag_prompt,
     build_rag_user_prompt,
+    build_structured_rag_prompt,
 )
-from backend.app.services.llm.parser import ResponseParser, ParsedResponse
+from backend.app.services.llm.parser import (
+    ResponseParser,
+    ParsedResponse,
+    StructuredOutputParser,
+)
+from backend.app.schemas.response import (
+    StructuredResearchResponse,
+    EvidenceStatus,
+    SourceReference,
+    StructuredCitation,
+)
 
 __all__ = [
     "LLMConfig",
@@ -43,6 +55,7 @@ __all__ = [
     "LLMTimeoutError",
     "LLMResponseError",
     "LLMProviderError",
+    "StructuredOutputValidationError",
     "TokenUsage",
     "TokenCostEstimator",
     "token_cost_estimator",
@@ -60,6 +73,13 @@ __all__ = [
     "ACADEMIC_RAG_SYSTEM_PROMPT",
     "build_academic_rag_prompt",
     "build_rag_user_prompt",
+    "build_structured_rag_prompt",
     "ResponseParser",
     "ParsedResponse",
+    "StructuredOutputParser",
+    "StructuredResearchResponse",
+    "EvidenceStatus",
+    "SourceReference",
+    "StructuredCitation",
 ]
+
