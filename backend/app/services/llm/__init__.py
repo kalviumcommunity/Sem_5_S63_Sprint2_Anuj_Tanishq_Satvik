@@ -9,6 +9,8 @@ from backend.app.services.llm.exceptions import (
     LLMResponseError,
     LLMProviderError,
     StructuredOutputValidationError,
+    MissingPromptVariableError,
+    PromptTemplateNotFoundError,
 )
 from backend.app.services.llm.cost import (
     TokenUsage,
@@ -34,6 +36,16 @@ from backend.app.services.llm.prompts import (
     build_rag_user_prompt,
     build_structured_rag_prompt,
 )
+from backend.app.services.llm.templates import (
+    PromptTemplate,
+    PromptTemplateRegistry,
+    prompt_registry,
+    ACADEMIC_QA_TEMPLATE,
+    QUERY_REWRITING_TEMPLATE,
+    SUMMARIZATION_TEMPLATE,
+    SOURCE_GROUNDED_ANSWERING_TEMPLATE,
+    INSUFFICIENT_CONTEXT_REFUSAL_TEMPLATE,
+)
 from backend.app.services.llm.parser import (
     ResponseParser,
     ParsedResponse,
@@ -56,6 +68,8 @@ __all__ = [
     "LLMResponseError",
     "LLMProviderError",
     "StructuredOutputValidationError",
+    "MissingPromptVariableError",
+    "PromptTemplateNotFoundError",
     "TokenUsage",
     "TokenCostEstimator",
     "token_cost_estimator",
@@ -74,6 +88,14 @@ __all__ = [
     "build_academic_rag_prompt",
     "build_rag_user_prompt",
     "build_structured_rag_prompt",
+    "PromptTemplate",
+    "PromptTemplateRegistry",
+    "prompt_registry",
+    "ACADEMIC_QA_TEMPLATE",
+    "QUERY_REWRITING_TEMPLATE",
+    "SUMMARIZATION_TEMPLATE",
+    "SOURCE_GROUNDED_ANSWERING_TEMPLATE",
+    "INSUFFICIENT_CONTEXT_REFUSAL_TEMPLATE",
     "ResponseParser",
     "ParsedResponse",
     "StructuredOutputParser",
@@ -82,4 +104,5 @@ __all__ = [
     "SourceReference",
     "StructuredCitation",
 ]
+
 

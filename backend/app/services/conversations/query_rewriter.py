@@ -25,3 +25,17 @@ class QueryRewriter:
                 return f"{last_user_msg.content} - {query}"
 
         return query
+
+    @classmethod
+    def build_rewrite_prompt(cls, query: str, history: List[Message]):
+        """Render query rewriting prompt bundle using canonical template."""
+        from backend.app.services.llm.templates import QUERY_REWRITING_TEMPLATE
+
+        history_lines = [f"{m.role.value}: {m.content}" for m in history]
+        history_str = "\n".join(history_lines) if history_lines else "None"
+
+        return QUERY_REWRITING_TEMPLATE.render_bundle({
+            "conversation_history": history_str,
+            "follow_up_question": query,
+        })
+
