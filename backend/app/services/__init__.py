@@ -29,7 +29,10 @@ from backend.app.services.rag import (
     RAGPipeline,
 )
 from backend.app.services.conversations import (
+    ConversationContextManager,
     ConversationManager,
+    ConversationHistoryConfig,
+    ContextBudgetPlan,
     QueryRewriter,
 )
 from backend.app.services.tokenizer import (
@@ -58,7 +61,10 @@ __all__ = [
     "GroundingService",
     "CitationService",
     "RAGPipeline",
+    "ConversationContextManager",
     "ConversationManager",
+    "ConversationHistoryConfig",
+    "ContextBudgetPlan",
     "QueryRewriter",
     "TokenizerService",
     "TokenizerConfig",
