@@ -14,9 +14,16 @@ from backend.app.services.llm.exceptions import (
 )
 from backend.app.services.llm.cost import (
     TokenUsage,
+    CostBreakdown,
     TokenCostEstimator,
     token_cost_estimator,
     MODEL_PRICING_PER_MILLION,
+)
+from backend.app.services.tokenizer import (
+    TokenizerService,
+    TokenizerConfig,
+    get_tokenizer,
+    default_tokenizer,
 )
 from backend.app.services.llm.client import (
     LLMClientInterface,
@@ -103,6 +110,11 @@ __all__ = [
     "EvidenceStatus",
     "SourceReference",
     "StructuredCitation",
+    "CostBreakdown",
+    "TokenizerService",
+    "TokenizerConfig",
+    "get_tokenizer",
+    "default_tokenizer",
 ]
 
 
