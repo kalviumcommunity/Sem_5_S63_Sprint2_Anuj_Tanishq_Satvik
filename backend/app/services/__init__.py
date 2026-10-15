@@ -32,6 +32,12 @@ from backend.app.services.conversations import (
     ConversationManager,
     QueryRewriter,
 )
+from backend.app.services.tokenizer import (
+    TokenizerService,
+    TokenizerConfig,
+    get_tokenizer,
+    default_tokenizer,
+)
 
 __all__ = [
     "TextCleaner",
@@ -54,4 +60,8 @@ __all__ = [
     "RAGPipeline",
     "ConversationManager",
     "QueryRewriter",
+    "TokenizerService",
+    "TokenizerConfig",
+    "get_tokenizer",
+    "default_tokenizer",
 ]

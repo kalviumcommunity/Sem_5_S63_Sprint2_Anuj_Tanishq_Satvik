@@ -323,13 +323,16 @@ class OpenAILLMClient(LLMClientInterface):
             model_name = data.get("model", self.config.model)
             text_content = choice["message"]["content"]
 
-            p_tokens = raw_usage.get("prompt_tokens") or token_cost_estimator.estimate_tokens(prompt, model=model_name, provider="openai")
-            c_tokens = raw_usage.get("completion_tokens") or token_cost_estimator.estimate_tokens(text_content, model=model_name, provider="openai")
+            is_actual = bool(raw_usage and "prompt_tokens" in raw_usage and "completion_tokens" in raw_usage)
+            p_tokens = raw_usage.get("prompt_tokens") if is_actual else token_cost_estimator.estimate_tokens(prompt, model=model_name, provider="openai")
+            c_tokens = raw_usage.get("completion_tokens") if is_actual else token_cost_estimator.estimate_tokens(text_content, model=model_name, provider="openai")
             usage_record = token_cost_estimator.create_usage(
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
                 model=model_name,
                 provider="openai",
+                is_estimated=not is_actual,
+                usage_type="actual" if is_actual else "estimated",
             )
 
             logger.info(
@@ -468,13 +471,16 @@ class GeminiLLMClient(LLMClientInterface):
             part_text = candidate["content"]["parts"][0]["text"]
             raw_usage = data.get("usageMetadata", {})
 
-            p_tokens = raw_usage.get("promptTokenCount") or token_cost_estimator.estimate_tokens(prompt, model=self.config.model, provider="gemini")
-            c_tokens = raw_usage.get("candidatesTokenCount") or token_cost_estimator.estimate_tokens(part_text, model=self.config.model, provider="gemini")
+            is_actual = bool(raw_usage and "promptTokenCount" in raw_usage and "candidatesTokenCount" in raw_usage)
+            p_tokens = raw_usage.get("promptTokenCount") if is_actual else token_cost_estimator.estimate_tokens(prompt, model=self.config.model, provider="gemini")
+            c_tokens = raw_usage.get("candidatesTokenCount") if is_actual else token_cost_estimator.estimate_tokens(part_text, model=self.config.model, provider="gemini")
             usage_record = token_cost_estimator.create_usage(
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
                 model=self.config.model,
                 provider="gemini",
+                is_estimated=not is_actual,
+                usage_type="actual" if is_actual else "estimated",
             )
 
             logger.info(
