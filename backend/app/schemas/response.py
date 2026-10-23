@@ -31,6 +31,13 @@ class SourceReference(BaseModel):
     chunk_id: Optional[str] = Field(default=None, description="Specific chunk identifier")
     section: Optional[str] = Field(default=None, description="Section heading")
     snippet: Optional[str] = Field(default=None, description="Direct supporting passage or snippet")
+    source: Optional[str] = Field(default=None, description="Original document identifier, filename, or canonical source")
+    chunk_index: Optional[int] = Field(default=None, description="Chunk position within source document")
+    url: Optional[str] = Field(default=None, description="Canonical document URL")
+    document_version: Optional[str] = Field(default=None, description="Version or effective date")
+    char_start: Optional[int] = Field(default=None, description="Starting character offset")
+    char_end: Optional[int] = Field(default=None, description="Ending character offset")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Complete metadata attributes")
 
 
 class StructuredCitation(BaseModel):
@@ -41,6 +48,11 @@ class StructuredCitation(BaseModel):
     chunk_id: Optional[str] = Field(default=None, description="Referenced chunk identifier")
     quote: Optional[str] = Field(default=None, description="Direct supporting quote")
     relevance_explanation: Optional[str] = Field(default=None, description="Explanation of relevance to the claim")
+    chunk_index: Optional[int] = Field(default=None, description="Referenced chunk index within source document")
+    section: Optional[str] = Field(default=None, description="Referenced section heading")
+    url: Optional[str] = Field(default=None, description="Canonical source URL")
+    char_start: Optional[int] = Field(default=None, description="Starting character offset")
+    char_end: Optional[int] = Field(default=None, description="Ending character offset")
 
 
 class StructuredResearchResponse(BaseModel):
@@ -101,6 +113,13 @@ class CitationItem(BaseModel):
     section: Optional[str] = None
     relevance_score: Optional[float] = None
     citation_text: Optional[str] = None
+    source: Optional[str] = None
+    chunk_index: Optional[int] = None
+    url: Optional[str] = None
+    document_version: Optional[str] = None
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class QueryResponse(BaseModel):

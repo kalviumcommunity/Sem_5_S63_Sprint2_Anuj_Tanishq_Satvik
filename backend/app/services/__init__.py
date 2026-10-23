@@ -5,6 +5,7 @@ from backend.app.services.documents import (
     DocumentChunker,
     TextExtractor,
     DocumentLoader,
+    DocumentIngestionPipeline,
 )
 from backend.app.services.llm import (
     LLMClientInterface,
@@ -52,6 +53,7 @@ __all__ = [
     "DocumentChunker",
     "TextExtractor",
     "DocumentLoader",
+    "DocumentIngestionPipeline",
     "LLMClientInterface",
     "get_llm_client",
     "ResponseParser",

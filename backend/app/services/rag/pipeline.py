@@ -107,6 +107,27 @@ class RAGPipeline:
         parsed_obj = parsed if "parsed" in locals() else ResponseParser.parse(answer_text)
         citations = self.citation_service.validate(parsed_obj, reranked)
 
+        # Populate source references from retrieved candidates preserving source metadata
+        if not source_refs and not is_refusal:
+            for cand in reranked:
+                source_refs.append(
+                    SourceReference(
+                        document_id=cand.document_id,
+                        title=cand.document_title,
+                        page=cand.page_number,
+                        chunk_id=cand.chunk_id,
+                        section=cand.section,
+                        snippet=cand.text[:200] if cand.text else None,
+                        source=cand.metadata.get("source") or cand.document_title,
+                        chunk_index=cand.metadata.get("chunk_index"),
+                        url=cand.metadata.get("url"),
+                        document_version=cand.metadata.get("document_version"),
+                        char_start=cand.metadata.get("char_start"),
+                        char_end=cand.metadata.get("char_end"),
+                        metadata=dict(cand.metadata),
+                    )
+                )
+
         # Record conversation turns for follow-up inquiry memory
         if conversation_id:
             self.conversation_manager.add_message(conversation_id, MessageRole.USER, query)
@@ -165,6 +186,26 @@ class RAGPipeline:
         if conversation_id:
             self.conversation_manager.add_message(conversation_id, MessageRole.USER, query)
             self.conversation_manager.add_message(conversation_id, MessageRole.ASSISTANT, structured_model.answer)
+
+        if not structured_model.source_references and not structured_model.is_refusal:
+            for cand in reranked:
+                structured_model.source_references.append(
+                    SourceReference(
+                        document_id=cand.document_id,
+                        title=cand.document_title,
+                        page=cand.page_number,
+                        chunk_id=cand.chunk_id,
+                        section=cand.section,
+                        snippet=cand.text[:200] if cand.text else None,
+                        source=cand.metadata.get("source") or cand.document_title,
+                        chunk_index=cand.metadata.get("chunk_index"),
+                        url=cand.metadata.get("url"),
+                        document_version=cand.metadata.get("document_version"),
+                        char_start=cand.metadata.get("char_start"),
+                        char_end=cand.metadata.get("char_end"),
+                        metadata=dict(cand.metadata),
+                    )
+                )
 
         return structured_model
 
