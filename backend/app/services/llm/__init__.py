@@ -1,6 +1,14 @@
 """LLM module exports."""
 
-from backend.app.services.llm.types import LLMConfig, CompletionResponse
+from backend.app.services.llm.types import (
+    LLMConfig,
+    CompletionResponse,
+    ProviderCapabilities,
+    PROVIDER_CAPABILITIES,
+    get_provider_capabilities,
+    validate_model_parameters,
+    ACADEMIC_EXPLANATION_CONFIG,
+)
 from backend.app.services.llm.exceptions import (
     LLMException,
     LLMAuthenticationError,
@@ -11,6 +19,7 @@ from backend.app.services.llm.exceptions import (
     StructuredOutputValidationError,
     MissingPromptVariableError,
     PromptTemplateNotFoundError,
+    InvalidModelParameterError,
 )
 from backend.app.services.llm.cost import (
     TokenUsage,
@@ -110,6 +119,12 @@ __all__ = [
     "EvidenceStatus",
     "SourceReference",
     "StructuredCitation",
+    "InvalidModelParameterError",
+    "ProviderCapabilities",
+    "PROVIDER_CAPABILITIES",
+    "get_provider_capabilities",
+    "validate_model_parameters",
+    "ACADEMIC_EXPLANATION_CONFIG",
     "CostBreakdown",
     "TokenizerService",
     "TokenizerConfig",

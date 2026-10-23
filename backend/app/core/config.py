@@ -36,14 +36,20 @@ class Settings(BaseSettings):
     # LLM Settings
     LLM_PROVIDER: str = "openai"
     LLM_API_KEY: str = ""
+    OPENAI_API_KEY: Optional[str] = None
+    GEMINI_API_KEY: Optional[str] = None
     LLM_MODEL: str = "gpt-4o-mini"
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 1024
     LLM_TOP_P: float = 1.0
+    LLM_TOP_K: Optional[int] = None
+    LLM_PRESENCE_PENALTY: Optional[float] = None
+    LLM_FREQUENCY_PENALTY: Optional[float] = None
     LLM_SEED: Optional[int] = 42
     LLM_TIMEOUT_SECONDS: float = 30.0
     LLM_RESPONSE_FORMAT: str = "text"
     LLM_MAX_RETRIES: int = 2
+    LLM_FALLBACK_TO_MOCK: bool = True
 
     # Embedding Settings
     EMBEDDING_PROVIDER: str = "openai"

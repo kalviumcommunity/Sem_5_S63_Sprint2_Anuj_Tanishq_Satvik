@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 import json
+import os
 import time
 from typing import Any, Dict, Optional, Tuple, Type, TypeVar
 import httpx
@@ -11,6 +12,7 @@ from backend.app.core.config import settings
 from backend.app.core.logging import logger
 from backend.app.schemas.response import StructuredResearchResponse
 from backend.app.services.llm.exceptions import (
+    InvalidModelParameterError,
     LLMAuthenticationError,
     LLMException,
     LLMProviderError,
@@ -21,7 +23,12 @@ from backend.app.services.llm.exceptions import (
 )
 from backend.app.services.llm.cost import TokenUsage, token_cost_estimator
 from backend.app.services.llm.prompts import ACADEMIC_RAG_SYSTEM_PROMPT
-from backend.app.services.llm.types import CompletionResponse, LLMConfig
+from backend.app.services.llm.types import (
+    CompletionResponse,
+    LLMConfig,
+    get_provider_capabilities,
+    validate_model_parameters,
+)
 from backend.app.services.llm.parser import StructuredOutputParser
 
 T = TypeVar("T", bound=BaseModel)
@@ -29,6 +36,8 @@ T = TypeVar("T", bound=BaseModel)
 
 class LLMClientInterface(ABC):
     """Abstract interface defining standard LLM completion contracts."""
+
+    config: LLMConfig
 
     @abstractmethod
     async def complete(
@@ -99,6 +108,49 @@ class LLMClientInterface(ABC):
         )
         return validated_model, resp
 
+    def _validate_call_params(
+        self,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        provider: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Validate per-call parameter overrides against ranges and combinations."""
+        effective_temp = temperature if temperature is not None else getattr(self.config, "temperature", 0.1)
+        effective_max_tokens = max_tokens if max_tokens is not None else getattr(self.config, "max_tokens", 1024)
+        effective_top_p = kwargs.get("top_p", getattr(self.config, "top_p", 1.0))
+        effective_top_k = kwargs.get("top_k", getattr(self.config, "top_k", None))
+        effective_pres_pen = kwargs.get("presence_penalty", getattr(self.config, "presence_penalty", None))
+        effective_freq_pen = kwargs.get("frequency_penalty", getattr(self.config, "frequency_penalty", None))
+        effective_resp_format = kwargs.get("response_format", getattr(self.config, "response_format", "text"))
+        effective_stop = kwargs.get("stop", kwargs.get("stop_sequences", getattr(self.config, "stop_sequences", None)))
+        effective_timeout = kwargs.get("timeout_seconds", getattr(self.config, "timeout_seconds", 30.0))
+
+        validate_model_parameters(
+            model=kwargs.get("model", getattr(self.config, "model", None)),
+            temperature=effective_temp,
+            max_tokens=effective_max_tokens,
+            top_p=effective_top_p,
+            top_k=effective_top_k,
+            presence_penalty=effective_pres_pen,
+            frequency_penalty=effective_freq_pen,
+            response_format=effective_resp_format,
+            stop_sequences=effective_stop,
+            timeout_seconds=effective_timeout,
+            provider=provider or getattr(self, "provider_name", "llm"),
+        )
+        return {
+            "temperature": effective_temp,
+            "max_tokens": effective_max_tokens,
+            "top_p": effective_top_p,
+            "top_k": effective_top_k,
+            "presence_penalty": effective_pres_pen,
+            "frequency_penalty": effective_freq_pen,
+            "response_format": effective_resp_format,
+            "stop_sequences": effective_stop,
+            "timeout_seconds": effective_timeout,
+        }
+
 
 class MockLLMClient(LLMClientInterface):
     """Deterministic mock LLM client for offline development and testing."""
@@ -117,6 +169,12 @@ class MockLLMClient(LLMClientInterface):
         max_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> CompletionResponse:
+        params = self._validate_call_params(
+            temperature=temperature,
+            max_tokens=max_tokens,
+            provider="mock",
+            **kwargs,
+        )
         start_time = time.perf_counter()
 
         if self.simulate_error == "timeout":
@@ -126,7 +184,7 @@ class MockLLMClient(LLMClientInterface):
         elif self.simulate_error == "rate_limit":
             raise LLMRateLimitError("Mock rate limit exceeded", provider="mock", status_code=429)
 
-        resp_format = kwargs.get("response_format", getattr(self.config, "response_format", "text"))
+        resp_format = params["response_format"]
 
         if self.simulate_error == "invalid_json":
             text = "Here is the answer: { invalid_json: missing_quotes, "
@@ -170,7 +228,6 @@ class MockLLMClient(LLMClientInterface):
                 "raw user data [Doc: Federated Learning Survey, Page: 8]."
             )
 
-
         latency = (time.perf_counter() - start_time) * 1000
         prompt_tokens = token_cost_estimator.estimate_tokens(prompt, model=self.config.model, provider="mock")
         comp_tokens = token_cost_estimator.estimate_tokens(text, model=self.config.model, provider="mock")
@@ -211,10 +268,34 @@ class OpenAILLMClient(LLMClientInterface):
 
     provider_name: str = "openai"
 
-    def __init__(self, config: Optional[LLMConfig] = None, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        config: Optional[LLMConfig] = None,
+        api_key: Optional[str] = None,
+        fallback_to_mock: Optional[bool] = None,
+    ):
         self.config = config or LLMConfig.from_settings()
-        self.api_key = api_key or self.config.api_key or settings.LLM_API_KEY
+        self.fallback_to_mock = (
+            fallback_to_mock
+            if fallback_to_mock is not None
+            else getattr(self.config, "fallback_to_mock", True)
+        )
+        self.api_key = self._resolve_api_key(api_key)
         self.base_url = "https://api.openai.com/v1"
+
+    def _resolve_api_key(self, explicit_key: Optional[str]) -> Optional[str]:
+        """Resolve API key securely: explicit -> config -> settings/env."""
+        key = (
+            explicit_key
+            or (self.config.api_key if self.config else None)
+            or getattr(settings, "OPENAI_API_KEY", None)
+            or getattr(settings, "LLM_API_KEY", None)
+            or os.environ.get("OPENAI_API_KEY")
+            or os.environ.get("LLM_API_KEY")
+        )
+        if key:
+            key = key.strip()
+        return key or None
 
     async def complete(
         self,
@@ -224,15 +305,31 @@ class OpenAILLMClient(LLMClientInterface):
         max_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> CompletionResponse:
-        if not self.api_key or self.api_key.startswith("your-"):
-            logger.warning("Valid OpenAI API key not detected; falling back to MockLLMClient.")
-            return await MockLLMClient(config=self.config).complete(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                **kwargs,
-            )
+        # Validate per-call parameters
+        params = self._validate_call_params(
+            temperature=temperature,
+            max_tokens=max_tokens,
+            provider="openai",
+            **kwargs,
+        )
+
+        is_missing_or_placeholder = not self.api_key or self.api_key.startswith("your-")
+        if is_missing_or_placeholder:
+            if self.fallback_to_mock:
+                logger.warning("Valid OpenAI API key not detected; falling back to MockLLMClient.")
+                return await MockLLMClient(config=self.config).complete(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    temperature=params["temperature"],
+                    max_tokens=params["max_tokens"],
+                    **kwargs,
+                )
+            else:
+                raise LLMAuthenticationError(
+                    "Missing or invalid OpenAI API credentials. Configure OPENAI_API_KEY or LLM_API_KEY.",
+                    provider="openai",
+                    status_code=401,
+                )
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -247,28 +344,28 @@ class OpenAILLMClient(LLMClientInterface):
 
         # Assemble provider-aware parameters
         model_name = kwargs.get("model", self.config.model)
-        temp = temperature if temperature is not None else self.config.temperature
-        max_toks = max_tokens if max_tokens is not None else self.config.max_tokens
-        top_p_val = kwargs.get("top_p", self.config.top_p)
         seed_val = kwargs.get("seed", self.config.seed)
-        resp_format_val = kwargs.get("response_format", self.config.response_format)
-        stop_seqs = kwargs.get("stop", kwargs.get("stop_sequences", self.config.stop_sequences))
-        timeout = kwargs.get("timeout_seconds", self.config.timeout_seconds)
+        timeout = params["timeout_seconds"]
 
         payload: Dict[str, Any] = {
             "model": model_name,
             "messages": api_messages,
-            "temperature": temp,
-            "max_tokens": max_toks,
+            "temperature": params["temperature"],
+            "max_tokens": params["max_tokens"],
         }
-        if top_p_val is not None:
-            payload["top_p"] = top_p_val
+        if params["top_p"] is not None:
+            payload["top_p"] = params["top_p"]
         if seed_val is not None:
             payload["seed"] = seed_val
-        if resp_format_val == "json_object":
+        if params["response_format"] == "json_object":
             payload["response_format"] = {"type": "json_object"}
-        if stop_seqs:
-            payload["stop"] = stop_seqs
+        if params["stop_sequences"]:
+            payload["stop"] = params["stop_sequences"]
+        if params["presence_penalty"] is not None:
+            payload["presence_penalty"] = params["presence_penalty"]
+        if params["frequency_penalty"] is not None:
+            payload["frequency_penalty"] = params["frequency_penalty"]
+        # Note: top_k is intentionally excluded as OpenAI does not support it
 
         start_time = time.perf_counter()
         try:
@@ -280,7 +377,7 @@ class OpenAILLMClient(LLMClientInterface):
                 )
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError(
-                f"OpenAI request timed out after {self.config.timeout_seconds}s: {exc}",
+                f"OpenAI request timed out after {timeout}s: {exc}",
                 provider="openai",
             ) from exc
         except httpx.RequestError as exc:
@@ -370,12 +467,36 @@ class GeminiLLMClient(LLMClientInterface):
 
     provider_name: str = "gemini"
 
-    def __init__(self, config: Optional[LLMConfig] = None, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        config: Optional[LLMConfig] = None,
+        api_key: Optional[str] = None,
+        fallback_to_mock: Optional[bool] = None,
+    ):
         self.config = config or LLMConfig.from_settings()
         if not config:
             self.config.model = "gemini-1.5-flash"
-        self.api_key = api_key or self.config.api_key or settings.LLM_API_KEY
+        self.fallback_to_mock = (
+            fallback_to_mock
+            if fallback_to_mock is not None
+            else getattr(self.config, "fallback_to_mock", True)
+        )
+        self.api_key = self._resolve_api_key(api_key)
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+
+    def _resolve_api_key(self, explicit_key: Optional[str]) -> Optional[str]:
+        """Resolve Gemini API key securely: explicit -> config -> settings/env."""
+        key = (
+            explicit_key
+            or (self.config.api_key if self.config else None)
+            or getattr(settings, "GEMINI_API_KEY", None)
+            or getattr(settings, "LLM_API_KEY", None)
+            or os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("LLM_API_KEY")
+        )
+        if key:
+            key = key.strip()
+        return key or None
 
     async def complete(
         self,
@@ -385,36 +506,49 @@ class GeminiLLMClient(LLMClientInterface):
         max_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> CompletionResponse:
-        if not self.api_key or self.api_key.startswith("your-"):
-            logger.warning("Valid Gemini API key not detected; falling back to MockLLMClient.")
-            return await MockLLMClient(config=self.config).complete(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                **kwargs,
-            )
+        # Validate per-call parameters
+        params = self._validate_call_params(
+            temperature=temperature,
+            max_tokens=max_tokens,
+            provider="gemini",
+            **kwargs,
+        )
+
+        is_missing_or_placeholder = not self.api_key or self.api_key.startswith("your-")
+        if is_missing_or_placeholder:
+            if self.fallback_to_mock:
+                logger.warning("Valid Gemini API key not detected; falling back to MockLLMClient.")
+                return await MockLLMClient(config=self.config).complete(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    temperature=params["temperature"],
+                    max_tokens=params["max_tokens"],
+                    **kwargs,
+                )
+            else:
+                raise LLMAuthenticationError(
+                    "Missing or invalid Gemini API credentials. Configure GEMINI_API_KEY or LLM_API_KEY.",
+                    provider="gemini",
+                    status_code=401,
+                )
 
         model_name = kwargs.get("model", self.config.model)
         url = f"{self.base_url}/{model_name}:generateContent?key={self.api_key}"
 
         gen_config: Dict[str, Any] = {
-            "temperature": temperature if temperature is not None else self.config.temperature,
-            "maxOutputTokens": max_tokens if max_tokens is not None else self.config.max_tokens,
+            "temperature": params["temperature"],
+            "maxOutputTokens": params["max_tokens"],
         }
-        top_p_val = kwargs.get("top_p", self.config.top_p)
-        if top_p_val is not None:
-            gen_config["topP"] = top_p_val
-
-        resp_format = kwargs.get("response_format", self.config.response_format)
-        if resp_format == "json_object":
+        if params["top_p"] is not None:
+            gen_config["topP"] = params["top_p"]
+        if params["top_k"] is not None:
+            gen_config["topK"] = params["top_k"]
+        if params["response_format"] == "json_object":
             gen_config["responseMimeType"] = "application/json"
+        if params["stop_sequences"]:
+            gen_config["stopSequences"] = params["stop_sequences"]
 
-        stop_seqs = kwargs.get("stop", kwargs.get("stop_sequences", self.config.stop_sequences))
-        if stop_seqs:
-            gen_config["stopSequences"] = stop_seqs
-
-        timeout = kwargs.get("timeout_seconds", self.config.timeout_seconds)
+        timeout = params["timeout_seconds"]
 
         payload: Dict[str, Any] = {
             "contents": [
@@ -435,7 +569,7 @@ class GeminiLLMClient(LLMClientInterface):
                 response = await client.post(url, json=payload)
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError(
-                f"Gemini API request timed out: {exc}",
+                f"Gemini API request timed out after {timeout}s: {exc}",
                 provider="gemini",
             ) from exc
         except httpx.RequestError as exc:
@@ -457,6 +591,12 @@ class GeminiLLMClient(LLMClientInterface):
                 "Gemini quota exceeded.",
                 provider="gemini",
                 status_code=429,
+            )
+        elif response.status_code >= 500:
+            raise LLMProviderError(
+                f"Gemini server returned error {response.status_code}.",
+                provider="gemini",
+                status_code=response.status_code,
             )
         elif response.is_error:
             raise LLMException(
@@ -516,15 +656,16 @@ class GeminiLLMClient(LLMClientInterface):
 def get_llm_client(
     provider: Optional[str] = None,
     config: Optional[LLMConfig] = None,
+    fallback_to_mock: Optional[bool] = None,
 ) -> LLMClientInterface:
     """Factory to instantiate the appropriate LLM client based on configuration."""
     target_provider = (provider or settings.LLM_PROVIDER).lower()
     effective_config = config or LLMConfig.from_settings()
 
     if target_provider == "openai":
-        return OpenAILLMClient(config=effective_config)
+        return OpenAILLMClient(config=effective_config, fallback_to_mock=fallback_to_mock)
     elif target_provider in ("gemini", "google"):
-        return GeminiLLMClient(config=effective_config)
+        return GeminiLLMClient(config=effective_config, fallback_to_mock=fallback_to_mock)
     elif target_provider == "mock":
         return MockLLMClient(config=effective_config)
     else:
