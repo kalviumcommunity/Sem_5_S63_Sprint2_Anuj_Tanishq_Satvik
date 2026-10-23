@@ -10,6 +10,11 @@ from backend.app.services.llm import (
     LLMClientInterface,
     get_llm_client,
     ResponseParser,
+    LLMConfig,
+    InvalidModelParameterError,
+    validate_model_parameters,
+    get_provider_capabilities,
+    ACADEMIC_EXPLANATION_CONFIG,
 )
 from backend.app.services.embeddings import (
     EmbeddingServiceInterface,
@@ -50,6 +55,11 @@ __all__ = [
     "LLMClientInterface",
     "get_llm_client",
     "ResponseParser",
+    "LLMConfig",
+    "InvalidModelParameterError",
+    "validate_model_parameters",
+    "get_provider_capabilities",
+    "ACADEMIC_EXPLANATION_CONFIG",
     "EmbeddingServiceInterface",
     "get_embedding_service",
     "chunk_list",

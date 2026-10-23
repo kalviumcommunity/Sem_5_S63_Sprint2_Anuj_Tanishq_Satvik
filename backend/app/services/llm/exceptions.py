@@ -90,3 +90,19 @@ class PromptTemplateNotFoundError(LLMException):
         self.version = version
 
 
+class InvalidModelParameterError(LLMException, ValueError):
+    """Raised when model parameters are invalid, out of range, or incompatible."""
+
+    def __init__(
+        self,
+        message: str,
+        parameter: str = None,
+        value: object = None,
+        provider: str = "llm",
+    ):
+        super().__init__(message, provider=provider)
+        self.parameter = parameter
+        self.value = value
+
+
+
