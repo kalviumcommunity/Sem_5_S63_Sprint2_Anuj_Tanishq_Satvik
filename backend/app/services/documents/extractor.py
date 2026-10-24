@@ -1,6 +1,8 @@
 """Text extraction interface and basic implementations."""
 
 from typing import Dict, List
+from backend.app.models.document import LoadedDocument
+from backend.app.services.documents.loader import DocumentLoader
 
 
 class TextExtractor:
@@ -15,3 +17,8 @@ class TextExtractor:
             for idx, page in enumerate(pages)
             if page.strip()
         ]
+
+    @staticmethod
+    def extract_from_file(file_path: str) -> LoadedDocument:
+        """Extract structured document content from file on disk."""
+        return DocumentLoader.load(file_path)
