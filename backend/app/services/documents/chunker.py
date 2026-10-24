@@ -1,7 +1,8 @@
 """Document chunker implementation."""
 
-from typing import List
+from typing import List, Optional
 from backend.app.models.chunk import Chunk
+from backend.app.models.document import LoadedDocument
 
 
 class DocumentChunker:
@@ -54,3 +55,34 @@ class DocumentChunker:
                 break
 
         return chunks
+
+    def chunk_document(self, doc: LoadedDocument) -> List[Chunk]:
+        """Split a loaded multi-page document into chunks while preserving page provenance and metadata."""
+        all_chunks: List[Chunk] = []
+        global_chunk_idx = 0
+
+        pages_to_process = doc.pages if doc.pages else []
+        if not pages_to_process and doc.raw_text:
+            pages_to_process = [type("Page", (), {"page_number": 1, "text": doc.raw_text, "metadata": {}})()]
+
+        for page in pages_to_process:
+            page_chunks = self.chunk_text(
+                text=page.text,
+                document_id=doc.id,
+                page_number=page.page_number,
+                section=getattr(page, "metadata", {}).get("section", "main"),
+            )
+            for chunk in page_chunks:
+                chunk.chunk_index = global_chunk_idx
+                chunk.metadata.update(
+                    {
+                        "filename": doc.filename,
+                        "document_type": doc.document_type.value if hasattr(doc.document_type, "value") else str(doc.document_type),
+                        "source_path": doc.source_path,
+                        "page_number": page.page_number,
+                    }
+                )
+                all_chunks.append(chunk)
+                global_chunk_idx += 1
+
+        return all_chunks
