@@ -21,8 +21,10 @@ class SearchResult(BaseModel):
     chunk_id: str
     document_id: str
     document_title: str
+    author: Optional[str] = None
     text: str
     page_number: int
+    chunk_index: int = 0
     section: Optional[str] = None
     score: float = 0.0
     metadata: Dict[str, Any] = {}
@@ -68,6 +70,8 @@ class InMemoryVectorStore:
         document_title: str,
         text: str,
         page_number: int = 1,
+        chunk_index: int = 0,
+        author: Optional[str] = None,
         section: Optional[str] = "main",
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -77,8 +81,10 @@ class InMemoryVectorStore:
             "vector": vector,
             "document_id": document_id,
             "document_title": document_title,
+            "author": author,
             "text": text,
             "page_number": page_number,
+            "chunk_index": chunk_index,
             "section": section,
             "metadata": metadata or {},
         }
@@ -101,9 +107,15 @@ class InMemoryVectorStore:
                 chunk_id=chunk.id,
                 vector=vec,
                 document_id=chunk.document_id,
-                document_title=chunk.metadata.get("filename", document_title),
+                document_title=(
+                    chunk.document_title
+                    or chunk.metadata.get("document_title")
+                    or chunk.metadata.get("filename", document_title)
+                ),
+                author=chunk.author or chunk.metadata.get("author"),
                 text=chunk.text,
                 page_number=chunk.page_number,
+                chunk_index=chunk.chunk_index,
                 section=chunk.section,
                 metadata=chunk.metadata,
             )
@@ -149,8 +161,10 @@ class InMemoryVectorStore:
                 chunk_id=item["chunk_id"],
                 document_id=item["document_id"],
                 document_title=item["document_title"],
+                author=item["author"],
                 text=item["text"],
                 page_number=item["page_number"],
+                chunk_index=item["chunk_index"],
                 section=item["section"],
                 score=round(score, 4),
                 metadata=item["metadata"],

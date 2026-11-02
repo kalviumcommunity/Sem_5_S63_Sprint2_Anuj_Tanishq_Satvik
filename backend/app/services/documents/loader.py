@@ -89,6 +89,17 @@ class DocumentLoader:
         if not raw_text.strip():
             raise EmptyDocumentError(filename=filename)
 
+        document_metadata = {
+            "source_path": source_path,
+            "file_hash": file_hash,
+            "document_type": doc_type.value,
+            "page_count": len(pages),
+        }
+        for key in ("document_title", "author"):
+            value = next((page.metadata.get(key) for page in pages if page.metadata.get(key)), None)
+            if value:
+                document_metadata[key] = value
+
         return LoadedDocument(
             filename=filename,
             source_path=source_path,
@@ -98,12 +109,7 @@ class DocumentLoader:
             page_count=len(pages),
             char_count=len(raw_text),
             file_hash=file_hash,
-            metadata={
-                "source_path": source_path,
-                "file_hash": file_hash,
-                "document_type": doc_type.value,
-                "page_count": len(pages),
-            },
+            metadata=document_metadata,
         )
 
     @staticmethod
@@ -209,6 +215,14 @@ class DocumentLoader:
             from pypdf import PdfReader
 
             reader = PdfReader(io.BytesIO(data))
+            pdf_metadata = reader.metadata
+            source_metadata = {}
+            if pdf_metadata:
+                for pdf_key, key in (("title", "document_title"), ("author", "author")):
+                    value = getattr(pdf_metadata, pdf_key, None)
+                    if value and str(value).strip():
+                        source_metadata[key] = str(value).strip()
+
             if len(reader.pages) > 0:
                 pypdf_worked = True
                 for idx, page in enumerate(reader.pages):
@@ -218,7 +232,11 @@ class DocumentLoader:
                             DocumentPage(
                                 page_number=idx + 1,
                                 text=page_text.strip(),
-                                metadata={"format": "pdf", "page_index": idx},
+                                metadata={
+                                    "format": "pdf",
+                                    "page_index": idx,
+                                    **source_metadata,
+                                },
                             )
                         )
         except Exception:

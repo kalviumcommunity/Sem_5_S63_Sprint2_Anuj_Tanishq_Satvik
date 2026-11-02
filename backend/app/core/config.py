@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     # Document Ingestion & Chunking
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 100
+    MAX_CHUNK_TOKENS: int = 4000
     MAX_FILE_SIZE_MB: int = 25
     ALLOWED_FILE_EXTENSIONS: Union[List[str], str] = [".pdf", ".docx", ".txt", ".md"]
     UPLOAD_DIRECTORY: str = "./data/uploads"

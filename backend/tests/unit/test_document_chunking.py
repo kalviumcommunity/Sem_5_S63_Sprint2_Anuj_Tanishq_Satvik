@@ -14,9 +14,14 @@ from backend.app.api.v1.documents import (
 from backend.app.models.document import DocumentPage, DocumentType, LoadedDocument
 from backend.app.services.documents.chunker import ChunkingStrategy, DocumentChunker
 from backend.app.services.documents.loader import DocumentLoader
+from backend.app.services.retrieval.search import InMemoryVectorStore
+from backend.app.services.tokenizer import default_tokenizer
 
 
-def _generate_multipage_pdf(pages: list[str]) -> bytes:
+def _generate_multipage_pdf(
+    pages: list[str],
+    metadata: dict[str, str] | None = None,
+) -> bytes:
     """Helper to synthesize a multi-page PDF document."""
     writer = PdfWriter()
     for text in pages:
@@ -44,6 +49,8 @@ startxref
 %%EOF"""
         reader = PdfReader(io.BytesIO(pdf.encode("latin-1")))
         writer.add_page(reader.pages[0])
+    if metadata:
+        writer.add_metadata(metadata)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
@@ -95,31 +102,68 @@ def test_chunk_text_single_chunk_under_limit():
     assert chunks[0].section == "abstract"
     assert chunks[0].text == text
     assert chunks[0].chunk_index == 0
-    assert chunks[0].token_count == len(text.split())
+    assert chunks[0].token_count == default_tokenizer.count_tokens(text)
 
 
-def test_fixed_word_chunking_with_overlap():
-    """Verify fixed-word chunking preserves configured overlap between adjacent chunks."""
-    words = [f"word_{i}" for i in range(1, 26)]
-    text = " ".join(words)
+def test_recursive_token_chunking_with_overlap():
+    """Verify token-bounded chunking preserves overlap with configurable token values."""
+    text = " ".join(["Transformers use attention to process all positions in a sequence."] * 8)
 
-    chunker = DocumentChunker(chunk_size=10, chunk_overlap=3, strategy=ChunkingStrategy.FIXED_WORD)
+    chunker = DocumentChunker(
+        chunk_size=20,
+        chunk_overlap=5,
+        strategy=ChunkingStrategy.RECURSIVE_CHARACTER,
+    )
     chunks = chunker.chunk_text(text, document_id="doc-1")
 
-    assert len(chunks) >= 3
-    # First chunk has 10 words: word_1 .. word_10
-    c0_words = chunks[0].text.split()
-    assert len(c0_words) == 10
-    assert c0_words[0] == "word_1"
-    assert c0_words[-1] == "word_10"
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert chunk.token_count == default_tokenizer.count_tokens(chunk.text)
+        assert chunk.token_count <= 20
+        assert chunk.metadata["token_count"] == chunk.token_count
 
-    # Step is 10 - 3 = 7. Second chunk starts at word_8
-    c1_words = chunks[1].text.split()
-    assert c1_words[0] == "word_8"
-    assert c1_words[1] == "word_9"
-    assert c1_words[2] == "word_10"
-    # Overlap contains word_8, word_9, word_10
-    assert set(c0_words[-3:]) == set(c1_words[:3])
+    previous_words = chunks[0].text.split()
+    current_words = chunks[1].text.split()
+    assert any(
+        " ".join(previous_words[-count:]) in " ".join(current_words[:count + 2])
+        for count in range(1, min(5, len(previous_words)) + 1)
+    )
+
+
+def test_token_chunk_sizes_and_overlap_are_configurable():
+    """Verify different token budgets change chunking and both retain page provenance."""
+    text = " ".join(
+        [
+            "First paragraph explains token-aware chunking and source page tracking.",
+            "Second paragraph describes overlap between adjacent research chunks.",
+            "Third paragraph preserves sentence boundaries and citations.",
+            "Fourth paragraph tests a smaller token window.",
+        ]
+    )
+    small = DocumentChunker(chunk_size=12, chunk_overlap=3)
+    large = DocumentChunker(chunk_size=30, chunk_overlap=8)
+    no_overlap = DocumentChunker(chunk_size=12, chunk_overlap=0)
+
+    small_chunks = small.chunk_text(text, document_id="doc-size", page_number=3, section="methods")
+    large_chunks = large.chunk_text(text, document_id="doc-size", page_number=3, section="methods")
+    no_overlap_chunks = no_overlap.chunk_text(text, document_id="doc-size", page_number=3, section="methods")
+
+    assert len(small_chunks) > len(large_chunks)
+    assert "research chunks." in small_chunks[2].text
+    assert "research chunks." not in no_overlap_chunks[2].text
+    assert "research chunks." in large_chunks[1].text
+    for chunk in small_chunks:
+        assert chunk.token_count <= 12
+        assert chunk.page_number == 3
+        assert chunk.section == "methods"
+    for chunk in large_chunks:
+        assert chunk.token_count <= 30
+        assert chunk.page_number == 3
+
+
+def test_chunker_enforces_configured_maximum_token_limit():
+    with pytest.raises(ValueError, match="cannot exceed max_chunk_tokens"):
+        DocumentChunker(chunk_size=21, chunk_overlap=2, max_chunk_tokens=20)
 
 
 def test_recursive_character_chunking():
@@ -137,9 +181,9 @@ def test_recursive_character_chunking():
     )
     chunks = chunker.chunk_text(text, document_id="doc-rec")
 
-    assert len(chunks) >= 3
+    assert len(chunks) == 1
     for chunk in chunks:
-        assert len(chunk.text) <= 150
+        assert chunk.token_count <= 110
         assert chunk.metadata["strategy"] == ChunkingStrategy.RECURSIVE_CHARACTER.value
 
 
@@ -276,6 +320,67 @@ def test_chunk_multiple_pdf_documents():
         assert represented_pages == set(range(1, len(pages) + 1))
 
 
+def test_chunk_metadata_tracks_multiple_documents_through_retrieval():
+    """Verify retrieved chunks retain their document identity and PDF page provenance."""
+    documents = [
+        {
+            "filename": "transformer_paper.pdf",
+            "title": "Attention Is All You Need",
+            "author": "Ashish Vaswani",
+            "pages": ["Transformer attention appears on page one.", "Multi-head attention is on page two."],
+        },
+        {
+            "filename": "consensus_raft.pdf",
+            "title": "In Search of an Understandable Consensus Protocol",
+            "author": "Diego Ongaro",
+            "pages": ["Raft consensus appears on page one.", "Leader election is on page two."],
+        },
+    ]
+    chunker = DocumentChunker(chunk_size=200, chunk_overlap=20)
+    store = InMemoryVectorStore()
+    expected_chunks = {}
+
+    for source in documents:
+        pdf_bytes = _generate_multipage_pdf(
+            source["pages"],
+            metadata={"/Title": source["title"], "/Author": source["author"]},
+        )
+        loaded_doc = DocumentLoader.load_bytes(pdf_bytes, source["filename"])
+        chunks = chunker.chunk_document(loaded_doc)
+
+        assert loaded_doc.metadata["document_title"] == source["title"]
+        assert loaded_doc.metadata["author"] == source["author"]
+        for chunk in chunks:
+            assert chunk.document_title == source["title"]
+            assert chunk.author == source["author"]
+            assert chunk.metadata["document_title"] == source["title"]
+            assert chunk.metadata["author"] == source["author"]
+            assert chunk.metadata["chunk_id"] == chunk.id
+            assert chunk.metadata["chunk_index"] == chunk.chunk_index
+            expected_chunks[chunk.id] = chunk
+
+        store.add_chunks(chunks, [[1.0, 0.0] for _ in chunks])
+
+    results = store.search([1.0, 0.0], top_k=len(expected_chunks))
+    assert {result.chunk_id for result in results} == set(expected_chunks)
+    assert {result.document_id for result in results} == {
+        chunk.document_id for chunk in expected_chunks.values()
+    }
+    for document_id in {chunk.document_id for chunk in expected_chunks.values()}:
+        assert {
+            result.page_number for result in results if result.document_id == document_id
+        } == {1, 2}
+
+    for result in results:
+        original = expected_chunks[result.chunk_id]
+        assert result.document_id == original.document_id
+        assert result.document_title == original.document_title
+        assert result.author == original.author
+        assert result.page_number == original.page_number
+        assert result.chunk_index == original.chunk_index
+        assert result.text == original.text
+
+
 def test_document_upload_api_pipeline_integration():
     """Verify document upload endpoint extracts, chunks, and persists academic PDF documents."""
     pdf_pages = [
@@ -283,7 +388,10 @@ def test_document_upload_api_pipeline_integration():
         "Formulation: We consider building blocks of the form y = F(x, {W_i}) + x where x and y are vectors.",
         "Results: ImageNet evaluation demonstrates 3.57% top-5 error on the test set (He et al., 2016).",
     ]
-    pdf_bytes = _generate_multipage_pdf(pdf_pages)
+    pdf_bytes = _generate_multipage_pdf(
+        pdf_pages,
+        metadata={"/Title": "Deep Residual Networks", "/Author": "Kaiming He"},
+    )
 
     upload_file = UploadFile(
         file=io.BytesIO(pdf_bytes),
@@ -309,6 +417,8 @@ def test_document_upload_api_pipeline_integration():
 
     for c in retrieved_chunks:
         assert c.document_id == doc_id
+        assert c.document_title == "Deep Residual Networks"
+        assert c.author == "Kaiming He"
         assert c.metadata["filename"] == "resnet_survey.pdf"
 
     # 3. Test strategy comparison endpoint

@@ -106,6 +106,8 @@ Chunk
 -----
 id
 document_id
+document_title
+author
 chunk_index
 text
 page_number
@@ -118,6 +120,12 @@ created_at
 
 The relationship between chunk, embedding, document, and citation must
 always be preserved.
+
+Chunk size and overlap are measured in tokens using the shared tokenizer.
+`CHUNK_SIZE`, `CHUNK_OVERLAP`, and `MAX_CHUNK_TOKENS` configure the defaults
+and hard per-chunk limit. The recursive strategy prefers sentence and
+paragraph boundaries, and overlap carries adjacent context without crossing
+page boundaries.
 
 ### Conversation
 
@@ -176,8 +184,10 @@ embedding[]
 text
 document_id
 chunk_id
+chunk_index
 page_number
 document_title
+author
 section
 document_type
 course
@@ -326,8 +336,10 @@ Retrieved Chunk
 ────────────────────────
 Document: AI Research Paper
 Page: 8
+Author: Jane Doe
 Section: Results
 Chunk ID: c102
+Chunk Index: 3
 
 Text:
 "..."
