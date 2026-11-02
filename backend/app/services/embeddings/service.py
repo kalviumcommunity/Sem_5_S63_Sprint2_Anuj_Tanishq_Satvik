@@ -1,7 +1,9 @@
 """Embedding service interface and implementations."""
 
 from abc import ABC, abstractmethod
+import hashlib
 import math
+import re
 from typing import List, Optional
 from backend.app.core.config import settings
 from backend.app.core.logging import logger
@@ -38,7 +40,7 @@ class EmbeddingServiceInterface(ABC):
 
 
 class MockEmbeddingService(EmbeddingServiceInterface):
-    """Deterministic mock embedding service for development, CI, and testing."""
+    """Deterministic lexical embedding for offline development, CI, and testing."""
 
     def __init__(self, dimension: int = 1536):
         self._dimension = dimension
@@ -48,9 +50,12 @@ class MockEmbeddingService(EmbeddingServiceInterface):
         return self._dimension
 
     def _generate_vector(self, text: str) -> List[float]:
-        """Generate pseudo-normalized deterministic vector from text hash."""
-        seed = sum(ord(c) for c in text) if text else 42
-        vec = [math.sin(seed + i * 0.1) for i in range(self._dimension)]
+        """Hash word features into a normalized vector; this is not a semantic model."""
+        vec = [0.0] * self._dimension
+        for token in re.findall(r"\w+", text.casefold()):
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            index = int.from_bytes(digest[:8], "big") % self._dimension
+            vec[index] += 1.0 if digest[8] & 1 else -1.0
         return self.normalize_vector(vec)
 
     async def embed_text(self, text: str) -> List[float]:
@@ -80,6 +85,8 @@ class OpenAIEmbeddingService(EmbeddingServiceInterface):
         if not self.api_key or self.api_key.startswith("your-") or "placeholder" in self.api_key:
             logger.warning("OpenAI API key missing for embeddings, using mock service.")
             return await MockEmbeddingService(dimension=self._dimension).embed_batch(texts)
+        if not texts:
+            return []
 
         import httpx
 
@@ -87,6 +94,7 @@ class OpenAIEmbeddingService(EmbeddingServiceInterface):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        headers["Authorization"] = "Bearer " + self.api_key
         payload = {
             "model": self.model,
             "input": texts,
@@ -98,8 +106,23 @@ class OpenAIEmbeddingService(EmbeddingServiceInterface):
                 json=payload,
             )
             resp.raise_for_status()
-            data = resp.json()
-            return [self.normalize_vector(item["embedding"]) for item in data["data"]]
+            data = sorted(resp.json()["data"], key=lambda item: item["index"])
+            if [item["index"] for item in data] != list(range(len(texts))):
+                raise ValueError("Embedding response indexes do not match the input batch.")
+            vectors = [self.normalize_vector(item["embedding"]) for item in data]
+            for vector in vectors:
+                validate_embedding(vector, self._dimension)
+            return vectors
+
+
+def validate_embedding(vector: List[float], expected_dimension: int) -> None:
+    """Reject malformed vectors before indexing or retrieval."""
+    if len(vector) != expected_dimension:
+        raise ValueError(
+            f"Embedding dimension {len(vector)} does not match configured dimension {expected_dimension}."
+        )
+    if not vector or any(not math.isfinite(value) for value in vector):
+        raise ValueError("Embedding values must be finite and the vector must not be empty.")
 
 
 class CachedEmbeddingService(EmbeddingServiceInterface):

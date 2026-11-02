@@ -16,7 +16,8 @@ from backend.app.api.v1.documents import (
 from backend.app.models.document import DocumentPage, DocumentType, LoadedDocument, ProcessingStatus
 from backend.app.services.documents.chunker import ChunkingStrategy, DocumentChunker
 from backend.app.services.documents.loader import DocumentLoader
-from backend.app.services.retrieval.search import InMemoryVectorStore
+from backend.app.services.retrieval.search import InMemoryVectorStore, get_vector_store
+from backend.app.services.embeddings.service import get_embedding_service
 from backend.app.services.tokenizer import default_tokenizer
 
 
@@ -383,7 +384,8 @@ def test_chunk_metadata_tracks_multiple_documents_through_retrieval():
         assert result.text == original.text
 
 
-def test_document_upload_api_pipeline_integration():
+@pytest.mark.asyncio
+async def test_document_upload_api_pipeline_integration():
     """Verify document upload endpoint extracts, chunks, and persists academic PDF documents."""
     pdf_pages = [
         "Abstract: Deep residual networks ease the training of substantially deeper neural networks [1].",
@@ -401,7 +403,7 @@ def test_document_upload_api_pipeline_integration():
     )
 
     # 1. Test upload and pipeline chunking
-    response = upload_document(file=upload_file, chunk_size=200, chunk_overlap=40)
+    response = await upload_document(file=upload_file, chunk_size=200, chunk_overlap=40)
     assert response.status == ProcessingStatus.COMPLETED.value
     assert response.duplicate is False
     assert response.filename == "resnet_survey.pdf"
@@ -426,8 +428,19 @@ def test_document_upload_api_pipeline_integration():
         assert c.text.strip()
         assert c.page_number in {1, 2, 3}
 
+    embedding_service = get_embedding_service()
+    query_vector = await embedding_service.embed_text("Deep residual networks")
+    indexed_chunks = get_vector_store().search(
+        query_vector,
+        top_k=response.chunks,
+        score_threshold=0.0,
+        filters={"document_id": doc_id},
+    )
+    assert {chunk.page_number for chunk in indexed_chunks} == {1, 2, 3}
+    assert all(chunk.document_title == "Deep Residual Networks" for chunk in indexed_chunks)
+
     duplicate_file = UploadFile(file=io.BytesIO(pdf_bytes), filename="same_content.pdf")
-    duplicate_response = upload_document(file=duplicate_file, chunk_size=200, chunk_overlap=40)
+    duplicate_response = await upload_document(file=duplicate_file, chunk_size=200, chunk_overlap=40)
     assert duplicate_response.duplicate is True
     assert duplicate_response.document_id == doc_id
     assert duplicate_response.chunks == response.chunks
@@ -439,7 +452,8 @@ def test_document_upload_api_pipeline_integration():
     assert comp_resp.recursive["total_chunks"] >= 1
 
 
-def test_batch_document_ingestion_tracks_status_and_isolates_failures():
+@pytest.mark.asyncio
+async def test_batch_document_ingestion_tracks_status_and_isolates_failures():
     """Process multiple PDFs, skip duplicate content, and retain failed status per bad file."""
     pdf_a = _generate_multipage_pdf([
         "Paper A page one contains the study abstract and hypothesis.",
@@ -449,7 +463,7 @@ def test_batch_document_ingestion_tracks_status_and_isolates_failures():
         "Paper B page one introduces a separate research question.",
         "Paper B page two reports independent experimental findings.",
     ])
-    responses = upload_documents(
+    responses = await upload_documents(
         files=[
             UploadFile(file=io.BytesIO(pdf_a), filename="study_a.pdf"),
             UploadFile(file=io.BytesIO(pdf_b), filename="study_b.pdf"),

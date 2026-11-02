@@ -7,8 +7,11 @@ from backend.app.services.embeddings.cache import EmbeddingCache
 from backend.app.services.embeddings.service import (
     CachedEmbeddingService,
     MockEmbeddingService,
+    OpenAIEmbeddingService,
     get_embedding_service,
+    validate_embedding,
 )
+from backend.app.services.retrieval.search import cosine_similarity
 
 
 @pytest.mark.asyncio
@@ -40,6 +43,71 @@ async def test_mock_embedding_deterministic():
 
     assert v1 == v2
     assert v1 != v3
+
+
+@pytest.mark.asyncio
+async def test_academic_embeddings_rank_related_text_above_unrelated_text():
+    """The offline lexical mock retains shared terms without claiming semantic inference."""
+    svc = MockEmbeddingService(dimension=512)
+    vectors = await svc.embed_batch(
+        [
+            "Neural networks learn patterns from academic training data.",
+            "Neural network models learn patterns from research training data.",
+            "Medieval trade routes connected cities through maritime commerce.",
+        ]
+    )
+
+    related_similarity = cosine_similarity(vectors[0], vectors[1])
+    unrelated_similarity = cosine_similarity(vectors[0], vectors[2])
+    assert related_similarity > unrelated_similarity
+
+
+def test_embedding_validation_checks_dimension_and_finite_values():
+    validate_embedding([0.6, 0.8], expected_dimension=2)
+    with pytest.raises(ValueError, match="does not match configured dimension"):
+        validate_embedding([1.0], expected_dimension=2)
+    with pytest.raises(ValueError, match="finite"):
+        validate_embedding([float("nan")], expected_dimension=1)
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_sends_auth_and_preserves_input_order(monkeypatch):
+    observed = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "data": [
+                    {"index": 1, "embedding": [0.0, 3.0, 4.0]},
+                    {"index": 0, "embedding": [3.0, 4.0, 0.0]},
+                ]
+            }
+
+    class AsyncClient:
+        def __init__(self, timeout):
+            observed["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            observed["headers"] = headers
+            observed["payload"] = json
+            return Response()
+
+    monkeypatch.setattr("httpx.AsyncClient", AsyncClient)
+    service = OpenAIEmbeddingService(api_key="test-key", model="test-model", dimension=3)
+    vectors = await service.embed_batch(["first", "second"])
+
+    assert observed["headers"]["Authorization"] == "Bearer test-key"
+    assert observed["payload"]["input"] == ["first", "second"]
+    assert vectors == [[0.6, 0.8, 0.0], [0.0, 0.6, 0.8]]
 
 
 @pytest.mark.asyncio

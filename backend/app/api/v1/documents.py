@@ -25,6 +25,8 @@ from backend.app.services.documents.exceptions import (
     EmptyDocumentError,
 )
 from backend.app.services.documents.loader import DocumentLoader
+from backend.app.services.embeddings.service import get_embedding_service, validate_embedding
+from backend.app.services.retrieval.search import get_vector_store
 
 router = APIRouter(tags=["Documents"])
 
@@ -54,7 +56,7 @@ def list_documents() -> List[DocumentInfo]:
 
 
 @router.post("/documents/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
-def upload_document(
+async def upload_document(
     file: UploadFile = File(..., description="Academic PDF or document file to process and chunk"),
     chunk_size: int = Query(default=settings.CHUNK_SIZE, ge=1, description="Maximum chunk size in tokens"),
     chunk_overlap: int = Query(default=settings.CHUNK_OVERLAP, ge=0, description="Chunk overlap in tokens"),
@@ -64,7 +66,7 @@ def upload_document(
     ),
 ) -> DocumentUploadResponse:
     """Extract, validate, and chunk one uploaded academic document."""
-    return _process_upload(
+    return await _process_upload(
         file=file,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -73,7 +75,7 @@ def upload_document(
 
 
 @router.post("/documents/upload/batch", response_model=List[DocumentUploadResponse])
-def upload_documents(
+async def upload_documents(
     files: List[UploadFile] = File(..., description="Academic documents to process independently"),
     chunk_size: int = Query(default=settings.CHUNK_SIZE, ge=1, description="Maximum chunk size in tokens"),
     chunk_overlap: int = Query(default=settings.CHUNK_OVERLAP, ge=0, description="Chunk overlap in tokens"),
@@ -83,7 +85,7 @@ def upload_documents(
     results = []
     for file in files:
         try:
-            results.append(_process_upload(file, chunk_size, chunk_overlap, strategy))
+            results.append(await _process_upload(file, chunk_size, chunk_overlap, strategy))
         except HTTPException as exc:
             results.append(
                 DocumentUploadResponse(
@@ -97,7 +99,7 @@ def upload_documents(
     return results
 
 
-def _process_upload(
+async def _process_upload(
     file: UploadFile,
     chunk_size: int,
     chunk_overlap: int,
@@ -171,6 +173,14 @@ def _process_upload(
         doc_record.document_type = loaded_doc.document_type.value
         doc_record.author = loaded_doc.metadata.get("author")
         doc_record.page_count = loaded_doc.page_count
+        embedding_service = get_embedding_service()
+        vectors = await embedding_service.embed_batch([chunk.text for chunk in chunks])
+        if len(vectors) != len(chunks):
+            raise ValueError("Embedding count does not match the number of document chunks.")
+        for vector in vectors:
+            validate_embedding(vector, embedding_service.dimension)
+
+        get_vector_store().add_chunks(chunks, vectors, document_title=doc_record.title)
         chunk_repository.save_many(chunks)
         doc_record.processing_status = ProcessingStatus.COMPLETED
         document_repository.save(doc_record)
