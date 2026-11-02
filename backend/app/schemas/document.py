@@ -1,8 +1,8 @@
 """Pydantic schemas for document operations."""
 
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field
 
 
 class DocumentUploadResponse(BaseModel):
@@ -27,3 +27,25 @@ class DocumentInfo(BaseModel):
     page_count: int
     processing_status: str
     uploaded_at: datetime
+
+
+class ChunkResponse(BaseModel):
+    """Schema representing an individual document chunk."""
+
+    id: str
+    document_id: str
+    chunk_index: int
+    text: str
+    page_number: int
+    section: Optional[str] = None
+    token_count: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyComparisonResponse(BaseModel):
+    """Response schema comparing document chunking strategies."""
+
+    fixed_size: Dict[str, Any]
+    recursive: Dict[str, Any]
+    chosen_strategy: str
+    rationale: str
