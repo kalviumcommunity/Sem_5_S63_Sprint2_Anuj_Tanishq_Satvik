@@ -4,6 +4,7 @@ import os
 from typing import List, Optional
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
+from backend.app.core.config import settings
 from backend.app.models.document import Document, ProcessingStatus
 from backend.app.repositories.chunks import ChunkRepository
 from backend.app.repositories.documents import DocumentRepository
@@ -53,8 +54,8 @@ def list_documents() -> List[DocumentInfo]:
 @router.post("/documents/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
 def upload_document(
     file: UploadFile = File(..., description="Academic PDF or document file to process and chunk"),
-    chunk_size: int = Query(default=600, ge=50, le=4000, description="Chunk size in characters"),
-    chunk_overlap: int = Query(default=120, ge=0, le=1000, description="Chunk overlap in characters"),
+    chunk_size: int = Query(default=settings.CHUNK_SIZE, ge=1, description="Maximum chunk size in tokens"),
+    chunk_overlap: int = Query(default=settings.CHUNK_OVERLAP, ge=0, description="Chunk overlap in tokens"),
     strategy: ChunkingStrategy = Query(
         default=ChunkingStrategy.RECURSIVE_CHARACTER,
         description="Chunking strategy (recursive_character recommended for academic PDFs)",
@@ -65,6 +66,21 @@ def upload_document(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded file must have a valid filename.",
+        )
+
+    # Handle direct function invocations where FastAPI Query object is default
+    actual_chunk_size = chunk_size if isinstance(chunk_size, int) else settings.CHUNK_SIZE
+    actual_chunk_overlap = chunk_overlap if isinstance(chunk_overlap, int) else settings.CHUNK_OVERLAP
+    actual_strategy = strategy if isinstance(strategy, ChunkingStrategy) else ChunkingStrategy.RECURSIVE_CHARACTER
+    if actual_chunk_size > settings.MAX_CHUNK_TOKENS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"chunk_size cannot exceed {settings.MAX_CHUNK_TOKENS} tokens.",
+        )
+    if actual_chunk_overlap >= actual_chunk_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="chunk_overlap must be smaller than chunk_size.",
         )
 
     ext = os.path.splitext(file.filename)[1].lower().lstrip(".")
@@ -97,11 +113,6 @@ def upload_document(
             detail=f"Failed to process document: {exc}",
         )
 
-    # Handle direct function invocations where FastAPI Query object is default
-    actual_chunk_size = chunk_size if isinstance(chunk_size, int) else 600
-    actual_chunk_overlap = chunk_overlap if isinstance(chunk_overlap, int) else 120
-    actual_strategy = strategy if isinstance(strategy, ChunkingStrategy) else ChunkingStrategy.RECURSIVE_CHARACTER
-
     # Clean text per page to remove artifacts while preserving structure
     for page in loaded_doc.pages:
         page.text = TextCleaner.clean(page.text)
@@ -111,6 +122,7 @@ def upload_document(
         chunk_size=actual_chunk_size,
         chunk_overlap=actual_chunk_overlap,
         strategy=actual_strategy,
+        max_chunk_tokens=settings.MAX_CHUNK_TOKENS,
     )
     chunks = chunker.chunk_document(loaded_doc, strategy=actual_strategy)
 
@@ -190,10 +202,23 @@ def get_document_chunks(document_id: str) -> List[ChunkResponse]:
 @router.post("/documents/compare-strategies", response_model=StrategyComparisonResponse)
 def compare_chunking_strategies(
     file: UploadFile = File(..., description="Sample academic PDF to benchmark chunking strategies"),
-    chunk_size: int = Query(default=600, ge=50, le=4000),
-    chunk_overlap: int = Query(default=120, ge=0, le=1000),
+    chunk_size: int = Query(default=settings.CHUNK_SIZE, ge=1, description="Maximum chunk size in tokens"),
+    chunk_overlap: int = Query(default=settings.CHUNK_OVERLAP, ge=0, description="Chunk overlap in tokens"),
 ) -> StrategyComparisonResponse:
     """Compare fixed-size and recursive text chunking on an uploaded academic document."""
+    actual_chunk_size = chunk_size if isinstance(chunk_size, int) else settings.CHUNK_SIZE
+    actual_chunk_overlap = chunk_overlap if isinstance(chunk_overlap, int) else settings.CHUNK_OVERLAP
+    if actual_chunk_size > settings.MAX_CHUNK_TOKENS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"chunk_size cannot exceed {settings.MAX_CHUNK_TOKENS} tokens.",
+        )
+    if actual_chunk_overlap >= actual_chunk_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="chunk_overlap must be smaller than chunk_size.",
+        )
+
     if hasattr(file, "file") and hasattr(file.file, "read"):
         content = file.file.read()
     else:
@@ -201,9 +226,6 @@ def compare_chunking_strategies(
 
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is empty.")
-
-    actual_chunk_size = chunk_size if isinstance(chunk_size, int) else 600
-    actual_chunk_overlap = chunk_overlap if isinstance(chunk_overlap, int) else 120
 
     loaded_doc = DocumentLoader.load_bytes(data=content, filename=file.filename)
     comparison = DocumentChunker.compare_strategies(

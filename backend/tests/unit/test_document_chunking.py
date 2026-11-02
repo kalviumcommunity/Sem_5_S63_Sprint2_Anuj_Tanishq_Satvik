@@ -15,6 +15,7 @@ from backend.app.models.document import DocumentPage, DocumentType, LoadedDocume
 from backend.app.services.documents.chunker import ChunkingStrategy, DocumentChunker
 from backend.app.services.documents.loader import DocumentLoader
 from backend.app.services.retrieval.search import InMemoryVectorStore
+from backend.app.services.tokenizer import default_tokenizer
 
 
 def _generate_multipage_pdf(
@@ -101,31 +102,68 @@ def test_chunk_text_single_chunk_under_limit():
     assert chunks[0].section == "abstract"
     assert chunks[0].text == text
     assert chunks[0].chunk_index == 0
-    assert chunks[0].token_count == len(text.split())
+    assert chunks[0].token_count == default_tokenizer.count_tokens(text)
 
 
-def test_fixed_word_chunking_with_overlap():
-    """Verify fixed-word chunking preserves configured overlap between adjacent chunks."""
-    words = [f"word_{i}" for i in range(1, 26)]
-    text = " ".join(words)
+def test_recursive_token_chunking_with_overlap():
+    """Verify token-bounded chunking preserves overlap with configurable token values."""
+    text = " ".join(["Transformers use attention to process all positions in a sequence."] * 8)
 
-    chunker = DocumentChunker(chunk_size=10, chunk_overlap=3, strategy=ChunkingStrategy.FIXED_WORD)
+    chunker = DocumentChunker(
+        chunk_size=20,
+        chunk_overlap=5,
+        strategy=ChunkingStrategy.RECURSIVE_CHARACTER,
+    )
     chunks = chunker.chunk_text(text, document_id="doc-1")
 
-    assert len(chunks) >= 3
-    # First chunk has 10 words: word_1 .. word_10
-    c0_words = chunks[0].text.split()
-    assert len(c0_words) == 10
-    assert c0_words[0] == "word_1"
-    assert c0_words[-1] == "word_10"
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert chunk.token_count == default_tokenizer.count_tokens(chunk.text)
+        assert chunk.token_count <= 20
+        assert chunk.metadata["token_count"] == chunk.token_count
 
-    # Step is 10 - 3 = 7. Second chunk starts at word_8
-    c1_words = chunks[1].text.split()
-    assert c1_words[0] == "word_8"
-    assert c1_words[1] == "word_9"
-    assert c1_words[2] == "word_10"
-    # Overlap contains word_8, word_9, word_10
-    assert set(c0_words[-3:]) == set(c1_words[:3])
+    previous_words = chunks[0].text.split()
+    current_words = chunks[1].text.split()
+    assert any(
+        " ".join(previous_words[-count:]) in " ".join(current_words[:count + 2])
+        for count in range(1, min(5, len(previous_words)) + 1)
+    )
+
+
+def test_token_chunk_sizes_and_overlap_are_configurable():
+    """Verify different token budgets change chunking and both retain page provenance."""
+    text = " ".join(
+        [
+            "First paragraph explains token-aware chunking and source page tracking.",
+            "Second paragraph describes overlap between adjacent research chunks.",
+            "Third paragraph preserves sentence boundaries and citations.",
+            "Fourth paragraph tests a smaller token window.",
+        ]
+    )
+    small = DocumentChunker(chunk_size=12, chunk_overlap=3)
+    large = DocumentChunker(chunk_size=30, chunk_overlap=8)
+    no_overlap = DocumentChunker(chunk_size=12, chunk_overlap=0)
+
+    small_chunks = small.chunk_text(text, document_id="doc-size", page_number=3, section="methods")
+    large_chunks = large.chunk_text(text, document_id="doc-size", page_number=3, section="methods")
+    no_overlap_chunks = no_overlap.chunk_text(text, document_id="doc-size", page_number=3, section="methods")
+
+    assert len(small_chunks) > len(large_chunks)
+    assert "research chunks." in small_chunks[2].text
+    assert "research chunks." not in no_overlap_chunks[2].text
+    assert "research chunks." in large_chunks[1].text
+    for chunk in small_chunks:
+        assert chunk.token_count <= 12
+        assert chunk.page_number == 3
+        assert chunk.section == "methods"
+    for chunk in large_chunks:
+        assert chunk.token_count <= 30
+        assert chunk.page_number == 3
+
+
+def test_chunker_enforces_configured_maximum_token_limit():
+    with pytest.raises(ValueError, match="cannot exceed max_chunk_tokens"):
+        DocumentChunker(chunk_size=21, chunk_overlap=2, max_chunk_tokens=20)
 
 
 def test_recursive_character_chunking():
@@ -143,9 +181,9 @@ def test_recursive_character_chunking():
     )
     chunks = chunker.chunk_text(text, document_id="doc-rec")
 
-    assert len(chunks) >= 3
+    assert len(chunks) == 1
     for chunk in chunks:
-        assert len(chunk.text) <= 150
+        assert chunk.token_count <= 110
         assert chunk.metadata["strategy"] == ChunkingStrategy.RECURSIVE_CHARACTER.value
 
 
