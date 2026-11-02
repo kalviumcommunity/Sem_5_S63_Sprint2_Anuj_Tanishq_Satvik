@@ -4,6 +4,7 @@ import io
 import os
 import pytest
 import docx
+from pypdf import PdfReader, PdfWriter
 
 from backend.app.models.document import DocumentType, LoadedDocument
 from backend.app.services.documents.chunker import DocumentChunker
@@ -138,6 +139,26 @@ def test_load_pdf_document(tmp_path):
     assert "Quantum Computing Principles" in doc.raw_text
     assert doc.page_count == 1
     assert doc.pages[0].page_number == 1
+
+
+def test_pdf_loader_preserves_blank_page_numbers():
+    """Keep physical page numbering intact even when a page has no extractable text."""
+    writer = PdfWriter()
+    for text in ("First page has text.", "Third page has text."):
+        reader = PdfReader(io.BytesIO(_generate_minimal_pdf_bytes(text)))
+        writer.add_page(reader.pages[0])
+        if text.startswith("First"):
+            writer.add_blank_page()
+    output = io.BytesIO()
+    writer.write(output)
+
+    loaded = DocumentLoader.load_bytes(output.getvalue(), "blank-middle-page.pdf")
+    chunks = DocumentChunker(chunk_size=20, chunk_overlap=2).chunk_document(loaded)
+
+    assert loaded.page_count == 3
+    assert [page.page_number for page in loaded.pages] == [1, 2, 3]
+    assert loaded.pages[1].text == ""
+    assert {chunk.page_number for chunk in chunks} == {1, 3}
 
 
 def test_load_bytes_in_memory():

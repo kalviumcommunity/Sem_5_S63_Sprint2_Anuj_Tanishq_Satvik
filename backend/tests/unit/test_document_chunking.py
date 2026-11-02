@@ -10,8 +10,10 @@ from backend.app.api.v1.documents import (
     compare_chunking_strategies,
     get_document_chunks,
     upload_document,
+    upload_documents,
+    document_repository,
 )
-from backend.app.models.document import DocumentPage, DocumentType, LoadedDocument
+from backend.app.models.document import DocumentPage, DocumentType, LoadedDocument, ProcessingStatus
 from backend.app.services.documents.chunker import ChunkingStrategy, DocumentChunker
 from backend.app.services.documents.loader import DocumentLoader
 from backend.app.services.retrieval.search import InMemoryVectorStore
@@ -400,7 +402,8 @@ def test_document_upload_api_pipeline_integration():
 
     # 1. Test upload and pipeline chunking
     response = upload_document(file=upload_file, chunk_size=200, chunk_overlap=40)
-    assert response.status == "processed"
+    assert response.status == ProcessingStatus.COMPLETED.value
+    assert response.duplicate is False
     assert response.filename == "resnet_survey.pdf"
     assert response.chunks >= 3
     doc_id = response.document_id
@@ -420,9 +423,67 @@ def test_document_upload_api_pipeline_integration():
         assert c.document_title == "Deep Residual Networks"
         assert c.author == "Kaiming He"
         assert c.metadata["filename"] == "resnet_survey.pdf"
+        assert c.text.strip()
+        assert c.page_number in {1, 2, 3}
+
+    duplicate_file = UploadFile(file=io.BytesIO(pdf_bytes), filename="same_content.pdf")
+    duplicate_response = upload_document(file=duplicate_file, chunk_size=200, chunk_overlap=40)
+    assert duplicate_response.duplicate is True
+    assert duplicate_response.document_id == doc_id
+    assert duplicate_response.chunks == response.chunks
 
     # 3. Test strategy comparison endpoint
     comp_file = UploadFile(file=io.BytesIO(pdf_bytes), filename="resnet_survey.pdf")
     comp_resp = compare_chunking_strategies(file=comp_file, chunk_size=200, chunk_overlap=40)
     assert comp_resp.chosen_strategy == ChunkingStrategy.RECURSIVE_CHARACTER.value
     assert comp_resp.recursive["total_chunks"] >= 1
+
+
+def test_batch_document_ingestion_tracks_status_and_isolates_failures():
+    """Process multiple PDFs, skip duplicate content, and retain failed status per bad file."""
+    pdf_a = _generate_multipage_pdf([
+        "Paper A page one contains the study abstract and hypothesis.",
+        "Paper A page two contains methodology and evaluation results.",
+    ])
+    pdf_b = _generate_multipage_pdf([
+        "Paper B page one introduces a separate research question.",
+        "Paper B page two reports independent experimental findings.",
+    ])
+    responses = upload_documents(
+        files=[
+            UploadFile(file=io.BytesIO(pdf_a), filename="study_a.pdf"),
+            UploadFile(file=io.BytesIO(pdf_b), filename="study_b.pdf"),
+            UploadFile(file=io.BytesIO(pdf_a), filename="study_a_copy.pdf"),
+            UploadFile(file=io.BytesIO(b"%PDF-1.4 GARBAGE CORRUPTED"), filename="corrupt.pdf"),
+            UploadFile(file=io.BytesIO(b" \n\t "), filename="empty.txt"),
+        ],
+        chunk_size=40,
+        chunk_overlap=5,
+    )
+
+    assert [response.status for response in responses] == [
+        ProcessingStatus.COMPLETED.value,
+        ProcessingStatus.COMPLETED.value,
+        ProcessingStatus.COMPLETED.value,
+        ProcessingStatus.FAILED.value,
+        ProcessingStatus.FAILED.value,
+    ]
+    assert [response.duplicate for response in responses] == [False, False, True, False, False]
+    assert responses[0].document_id == responses[2].document_id
+
+    for result in (responses[0], responses[1]):
+        assert result.chunks > 0
+        stored = document_repository.get_by_id(result.document_id)
+        assert stored is not None
+        assert stored.processing_status == ProcessingStatus.COMPLETED
+        chunks = get_document_chunks(result.document_id)
+        assert len(chunks) == result.chunks
+        assert {chunk.page_number for chunk in chunks} == {1, 2}
+        assert all(chunk.text.strip() and chunk.document_id == result.document_id for chunk in chunks)
+
+    for result in responses[3:]:
+        stored = document_repository.get_by_id(result.document_id)
+        assert stored is not None
+        assert stored.processing_status == ProcessingStatus.FAILED
+        assert result.chunks == 0
+        assert result.message
