@@ -227,20 +227,20 @@ class DocumentLoader:
                 pypdf_worked = True
                 for idx, page in enumerate(reader.pages):
                     page_text = page.extract_text() or ""
-                    if page_text.strip():
-                        pages.append(
-                            DocumentPage(
-                                page_number=idx + 1,
-                                text=page_text.strip(),
-                                metadata={
-                                    "format": "pdf",
-                                    "page_index": idx,
-                                    **source_metadata,
-                                },
-                            )
+                    pages.append(
+                        DocumentPage(
+                            page_number=idx + 1,
+                            text=page_text.strip(),
+                            metadata={
+                                "format": "pdf",
+                                "page_index": idx,
+                                **source_metadata,
+                            },
                         )
+                    )
         except Exception:
             pypdf_worked = False
+            pages.clear()
 
         # Fallback for synthetic/minimal PDF text streams or pypdf extraction gaps
         if not pages:

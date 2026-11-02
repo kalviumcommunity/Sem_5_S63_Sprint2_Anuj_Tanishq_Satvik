@@ -229,13 +229,16 @@ Complete
 Recommended document states:
 
 ``` text
-UPLOADED
+PENDING
 PROCESSING
-EMBEDDING
-INDEXING
-INDEXED
+COMPLETED
 FAILED
 ```
+
+The batch upload endpoint processes files independently. SHA-256 reservations
+prevent duplicate processing within the running in-memory repository. Each
+successful document retains its extracted PDF page count, including blank
+pages, while chunks are created only for pages with text.
 
 ## 5. Embedding Service
 

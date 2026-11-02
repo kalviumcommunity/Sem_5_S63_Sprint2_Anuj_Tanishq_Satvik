@@ -8,12 +8,14 @@ import uuid
 
 
 class ProcessingStatus(str, Enum):
-    UPLOADED = "uploaded"
+    PENDING = "pending"
     PROCESSING = "processing"
-    EMBEDDING = "embedding"
-    INDEXING = "indexing"
-    INDEXED = "indexed"
+    COMPLETED = "completed"
     FAILED = "failed"
+    UPLOADED = "pending"
+    EMBEDDING = "processing"
+    INDEXING = "processing"
+    INDEXED = "completed"
 
 
 class DocumentType(str, Enum):
@@ -86,4 +88,4 @@ class Document(BaseModel):
     uploaded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     file_hash: str
     page_count: int = 0
-    processing_status: ProcessingStatus = ProcessingStatus.UPLOADED
+    processing_status: ProcessingStatus = ProcessingStatus.PENDING
