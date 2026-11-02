@@ -106,6 +106,8 @@ Chunk
 -----
 id
 document_id
+document_title
+author
 chunk_index
 text
 page_number
@@ -176,8 +178,10 @@ embedding[]
 text
 document_id
 chunk_id
+chunk_index
 page_number
 document_title
+author
 section
 document_type
 course
@@ -326,8 +330,10 @@ Retrieved Chunk
 ────────────────────────
 Document: AI Research Paper
 Page: 8
+Author: Jane Doe
 Section: Results
 Chunk ID: c102
+Chunk Index: 3
 
 Text:
 "..."

@@ -34,6 +34,8 @@ class ChunkResponse(BaseModel):
 
     id: str
     document_id: str
+    document_title: Optional[str] = None
+    author: Optional[str] = None
     chunk_index: int
     text: str
     page_number: int

@@ -1,6 +1,7 @@
 """Document chunker and text splitting implementations."""
 
 from enum import Enum
+import os
 import re
 from typing import Any, Dict, List, Optional
 from backend.app.models.chunk import Chunk
@@ -60,7 +61,7 @@ class DocumentChunker:
         text: str,
         document_id: str,
         page_number: int = 1,
-        section: str = "main",
+        section: Optional[str] = None,
         strategy: Optional[ChunkingStrategy] = None,
     ) -> List[Chunk]:
         """Split text into overlapping chunks with metadata."""
@@ -116,13 +117,15 @@ class DocumentChunker:
         """Split a loaded multi-page document into chunks while preserving page provenance and metadata."""
         all_chunks: List[Chunk] = []
         global_chunk_idx = 0
+        document_title = doc.metadata.get("document_title") or os.path.splitext(doc.filename)[0].replace("_", " ").title()
+        author = doc.metadata.get("author")
 
         pages_to_process = doc.pages if doc.pages else []
         if not pages_to_process and doc.raw_text:
             pages_to_process = [type("Page", (), {"page_number": 1, "text": doc.raw_text, "metadata": {}})()]
 
         for page in pages_to_process:
-            page_section = getattr(page, "metadata", {}).get("section", "main")
+            page_section = getattr(page, "metadata", {}).get("section")
             page_chunks = self.chunk_text(
                 text=page.text,
                 document_id=doc.id,
@@ -132,12 +135,18 @@ class DocumentChunker:
             )
             for chunk in page_chunks:
                 chunk.chunk_index = global_chunk_idx
+                chunk.document_title = document_title
+                chunk.author = author
                 chunk.metadata.update(
                     {
                         "filename": doc.filename,
+                        "document_title": document_title,
+                        "author": author,
                         "document_type": doc.document_type.value if hasattr(doc.document_type, "value") else str(doc.document_type),
                         "source_path": doc.source_path,
                         "page_number": page.page_number,
+                        "chunk_id": chunk.id,
+                        "chunk_index": global_chunk_idx,
                     }
                 )
                 all_chunks.append(chunk)

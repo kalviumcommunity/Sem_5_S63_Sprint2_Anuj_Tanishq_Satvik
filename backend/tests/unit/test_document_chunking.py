@@ -14,9 +14,13 @@ from backend.app.api.v1.documents import (
 from backend.app.models.document import DocumentPage, DocumentType, LoadedDocument
 from backend.app.services.documents.chunker import ChunkingStrategy, DocumentChunker
 from backend.app.services.documents.loader import DocumentLoader
+from backend.app.services.retrieval.search import InMemoryVectorStore
 
 
-def _generate_multipage_pdf(pages: list[str]) -> bytes:
+def _generate_multipage_pdf(
+    pages: list[str],
+    metadata: dict[str, str] | None = None,
+) -> bytes:
     """Helper to synthesize a multi-page PDF document."""
     writer = PdfWriter()
     for text in pages:
@@ -44,6 +48,8 @@ startxref
 %%EOF"""
         reader = PdfReader(io.BytesIO(pdf.encode("latin-1")))
         writer.add_page(reader.pages[0])
+    if metadata:
+        writer.add_metadata(metadata)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
@@ -276,6 +282,67 @@ def test_chunk_multiple_pdf_documents():
         assert represented_pages == set(range(1, len(pages) + 1))
 
 
+def test_chunk_metadata_tracks_multiple_documents_through_retrieval():
+    """Verify retrieved chunks retain their document identity and PDF page provenance."""
+    documents = [
+        {
+            "filename": "transformer_paper.pdf",
+            "title": "Attention Is All You Need",
+            "author": "Ashish Vaswani",
+            "pages": ["Transformer attention appears on page one.", "Multi-head attention is on page two."],
+        },
+        {
+            "filename": "consensus_raft.pdf",
+            "title": "In Search of an Understandable Consensus Protocol",
+            "author": "Diego Ongaro",
+            "pages": ["Raft consensus appears on page one.", "Leader election is on page two."],
+        },
+    ]
+    chunker = DocumentChunker(chunk_size=200, chunk_overlap=20)
+    store = InMemoryVectorStore()
+    expected_chunks = {}
+
+    for source in documents:
+        pdf_bytes = _generate_multipage_pdf(
+            source["pages"],
+            metadata={"/Title": source["title"], "/Author": source["author"]},
+        )
+        loaded_doc = DocumentLoader.load_bytes(pdf_bytes, source["filename"])
+        chunks = chunker.chunk_document(loaded_doc)
+
+        assert loaded_doc.metadata["document_title"] == source["title"]
+        assert loaded_doc.metadata["author"] == source["author"]
+        for chunk in chunks:
+            assert chunk.document_title == source["title"]
+            assert chunk.author == source["author"]
+            assert chunk.metadata["document_title"] == source["title"]
+            assert chunk.metadata["author"] == source["author"]
+            assert chunk.metadata["chunk_id"] == chunk.id
+            assert chunk.metadata["chunk_index"] == chunk.chunk_index
+            expected_chunks[chunk.id] = chunk
+
+        store.add_chunks(chunks, [[1.0, 0.0] for _ in chunks])
+
+    results = store.search([1.0, 0.0], top_k=len(expected_chunks))
+    assert {result.chunk_id for result in results} == set(expected_chunks)
+    assert {result.document_id for result in results} == {
+        chunk.document_id for chunk in expected_chunks.values()
+    }
+    for document_id in {chunk.document_id for chunk in expected_chunks.values()}:
+        assert {
+            result.page_number for result in results if result.document_id == document_id
+        } == {1, 2}
+
+    for result in results:
+        original = expected_chunks[result.chunk_id]
+        assert result.document_id == original.document_id
+        assert result.document_title == original.document_title
+        assert result.author == original.author
+        assert result.page_number == original.page_number
+        assert result.chunk_index == original.chunk_index
+        assert result.text == original.text
+
+
 def test_document_upload_api_pipeline_integration():
     """Verify document upload endpoint extracts, chunks, and persists academic PDF documents."""
     pdf_pages = [
@@ -283,7 +350,10 @@ def test_document_upload_api_pipeline_integration():
         "Formulation: We consider building blocks of the form y = F(x, {W_i}) + x where x and y are vectors.",
         "Results: ImageNet evaluation demonstrates 3.57% top-5 error on the test set (He et al., 2016).",
     ]
-    pdf_bytes = _generate_multipage_pdf(pdf_pages)
+    pdf_bytes = _generate_multipage_pdf(
+        pdf_pages,
+        metadata={"/Title": "Deep Residual Networks", "/Author": "Kaiming He"},
+    )
 
     upload_file = UploadFile(
         file=io.BytesIO(pdf_bytes),
@@ -309,6 +379,8 @@ def test_document_upload_api_pipeline_integration():
 
     for c in retrieved_chunks:
         assert c.document_id == doc_id
+        assert c.document_title == "Deep Residual Networks"
+        assert c.author == "Kaiming He"
         assert c.metadata["filename"] == "resnet_survey.pdf"
 
     # 3. Test strategy comparison endpoint

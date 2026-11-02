@@ -117,9 +117,10 @@ def upload_document(
     # Save to repositories
     doc_record = Document(
         id=loaded_doc.id,
-        title=os.path.splitext(file.filename)[0].replace("_", " ").title(),
+        title=loaded_doc.metadata.get("document_title") or os.path.splitext(file.filename)[0].replace("_", " ").title(),
         filename=file.filename,
         document_type=loaded_doc.document_type.value if hasattr(loaded_doc.document_type, "value") else str(loaded_doc.document_type),
+        author=loaded_doc.metadata.get("author"),
         file_hash=loaded_doc.file_hash or "",
         page_count=loaded_doc.page_count,
         processing_status=ProcessingStatus.INDEXED,
@@ -173,6 +174,8 @@ def get_document_chunks(document_id: str) -> List[ChunkResponse]:
         ChunkResponse(
             id=c.id,
             document_id=c.document_id,
+            document_title=c.document_title,
+            author=c.author,
             chunk_index=c.chunk_index,
             text=c.text,
             page_number=c.page_number,

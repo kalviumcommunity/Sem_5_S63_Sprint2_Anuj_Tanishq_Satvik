@@ -15,11 +15,12 @@ class ContextBuilder:
 
         context_blocks = []
         for idx, chunk in enumerate(chunks, 1):
+            author = f" | Author: {chunk.author}" if chunk.author else ""
             block = (
-                f"[{idx}] Source Document: \"{chunk.document_title}\" | "
+                f"[{idx}] Source Document: \"{chunk.document_title}\"{author} | "
                 f"Page: {chunk.page_number} | "
                 f"Section: {chunk.section or 'N/A'} | "
-                f"Chunk ID: {chunk.chunk_id}\n"
+                f"Chunk ID: {chunk.chunk_id} | Chunk Index: {chunk.chunk_index}\n"
                 f"Content: {chunk.text}\n"
             )
             context_blocks.append(block)
