@@ -1,8 +1,52 @@
 """Unit tests for Concept #11: Document Chunking & Text Splitting."""
 
+import asyncio
+import io
 import pytest
+from pypdf import PdfReader, PdfWriter
+from fastapi import UploadFile
+
+from backend.app.api.v1.documents import (
+    compare_chunking_strategies,
+    get_document_chunks,
+    upload_document,
+)
 from backend.app.models.document import DocumentPage, DocumentType, LoadedDocument
 from backend.app.services.documents.chunker import ChunkingStrategy, DocumentChunker
+from backend.app.services.documents.loader import DocumentLoader
+
+
+def _generate_multipage_pdf(pages: list[str]) -> bytes:
+    """Helper to synthesize a multi-page PDF document."""
+    writer = PdfWriter()
+    for text in pages:
+        stream = f"BT /F1 12 Tf 72 712 Td ({text}) Tj ET"
+        stream_len = len(stream)
+        pdf = f"""%PDF-1.4
+1 0 obj <</Type /Catalog /Pages 2 0 R>> endobj
+2 0 obj <</Type /Pages /Kids [3 0 R] /Count 1>> endobj
+3 0 obj <</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R>> endobj
+4 0 obj <</Type /Font /Subtype /Type1 /BaseFont /Helvetica>> endobj
+5 0 obj <</Length {stream_len}>> stream
+{stream}
+endstream endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000248 00000 n 
+0000000315 00000 n 
+trailer <</Size 6 /Root 1 0 R>>
+startxref
+410
+%%EOF"""
+        reader = PdfReader(io.BytesIO(pdf.encode("latin-1")))
+        writer.add_page(reader.pages[0])
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
 
 
 def test_chunker_initialization_validation():
@@ -155,14 +199,120 @@ def test_chunk_document_multi_page_provenance():
     chunks = chunker.chunk_document(doc)
 
     assert len(chunks) >= 3
-    # Check monotonic chunk_index
     for idx, c in enumerate(chunks):
         assert c.chunk_index == idx
         assert c.document_id == doc.id
         assert c.metadata["filename"] == "distributed_systems.pdf"
         assert c.metadata["document_type"] == "pdf"
 
-    # Check that both page 1 and page 2 are represented
     page_nums = {c.page_number for c in chunks}
     assert 1 in page_nums
     assert 2 in page_nums
+
+
+def test_academic_chunker_factory():
+    """Verify academic chunker factory provides recommended defaults for academic PDFs."""
+    chunker = DocumentChunker.create_academic_chunker()
+    assert chunker.strategy == ChunkingStrategy.RECURSIVE_CHARACTER
+    assert chunker.chunk_size == 600
+    assert chunker.chunk_overlap == 120
+    assert DocumentChunker.RECOMMENDED_ACADEMIC_STRATEGY == ChunkingStrategy.RECURSIVE_CHARACTER
+
+
+def test_compare_chunking_strategies_evaluation():
+    """Verify compare_strategies outputs valid comparative metrics and selects recursive chunking."""
+    academic_sample = (
+        "Transformer architectures revolutionized sequence modeling by replacing recurrence with attention [1].\n\n"
+        "The self-attention mechanism allows all positions to interact with each other in $O(1)$ operations.\n\n"
+        "Empirical evaluations across translation benchmarks confirm significant BLEU improvements (Vaswani et al., 2017)."
+    )
+    result = DocumentChunker.compare_strategies(academic_sample, chunk_size=200, chunk_overlap=40)
+
+    assert "fixed_size" in result
+    assert "recursive" in result
+    assert result["chosen_strategy"] == ChunkingStrategy.RECURSIVE_CHARACTER.value
+    assert "rationale" in result
+    assert result["fixed_size"]["total_chunks"] >= 1
+    assert result["recursive"]["total_chunks"] >= 1
+    assert "sentence_boundary_integrity" in result["recursive"]
+
+
+def test_chunk_multiple_pdf_documents():
+    """Verify extracting text and chunking multiple multi-page academic PDFs preserves page references."""
+    pdf_docs_data = {
+        "transformer_paper.pdf": [
+            "Attention Is All You Need abstract introducing self-attention [1].",
+            "Scaled Dot-Product Attention computes Attention(Q,K,V) with dimension d_k.",
+            "Conclusion and citations referencing multi-head attention (Vaswani et al., 2017).",
+        ],
+        "consensus_raft.pdf": [
+            "In Search of an Understandable Consensus Protocol introducing Raft [2].",
+            "Leader election and log consistency invariants guarantee linearizable state machine replication.",
+        ],
+    }
+
+    chunker = DocumentChunker.create_academic_chunker(chunk_size=150, chunk_overlap=30)
+
+    for filename, pages in pdf_docs_data.items():
+        pdf_bytes = _generate_multipage_pdf(pages)
+        loaded_doc = DocumentLoader.load_bytes(pdf_bytes, filename=filename)
+
+        assert loaded_doc.document_type == DocumentType.PDF
+        assert loaded_doc.page_count == len(pages)
+
+        chunks = chunker.chunk_document(loaded_doc)
+        assert len(chunks) >= len(pages)
+
+        # Verify page provenance and document references on every chunk
+        for chunk in chunks:
+            assert chunk.document_id == loaded_doc.id
+            assert chunk.metadata["filename"] == filename
+            assert chunk.metadata["document_type"] == "pdf"
+            assert chunk.page_number in range(1, len(pages) + 1)
+            assert len(chunk.text) > 0
+
+        # Verify all pages are represented in chunks
+        represented_pages = {c.page_number for c in chunks}
+        assert represented_pages == set(range(1, len(pages) + 1))
+
+
+def test_document_upload_api_pipeline_integration():
+    """Verify document upload endpoint extracts, chunks, and persists academic PDF documents."""
+    pdf_pages = [
+        "Abstract: Deep residual networks ease the training of substantially deeper neural networks [1].",
+        "Formulation: We consider building blocks of the form y = F(x, {W_i}) + x where x and y are vectors.",
+        "Results: ImageNet evaluation demonstrates 3.57% top-5 error on the test set (He et al., 2016).",
+    ]
+    pdf_bytes = _generate_multipage_pdf(pdf_pages)
+
+    upload_file = UploadFile(
+        file=io.BytesIO(pdf_bytes),
+        filename="resnet_survey.pdf",
+    )
+
+    # 1. Test upload and pipeline chunking
+    response = upload_document(file=upload_file, chunk_size=200, chunk_overlap=40)
+    assert response.status == "processed"
+    assert response.filename == "resnet_survey.pdf"
+    assert response.chunks >= 3
+    doc_id = response.document_id
+
+    # 2. Test chunk retrieval
+    retrieved_chunks = get_document_chunks(document_id=doc_id)
+    assert len(retrieved_chunks) == response.chunks
+
+    # Verify page numbers and metadata preserved end-to-end
+    page_numbers = {c.page_number for c in retrieved_chunks}
+    assert 1 in page_numbers
+    assert 2 in page_numbers
+    assert 3 in page_numbers
+
+    for c in retrieved_chunks:
+        assert c.document_id == doc_id
+        assert c.metadata["filename"] == "resnet_survey.pdf"
+
+    # 3. Test strategy comparison endpoint
+    comp_file = UploadFile(file=io.BytesIO(pdf_bytes), filename="resnet_survey.pdf")
+    comp_resp = compare_chunking_strategies(file=comp_file, chunk_size=200, chunk_overlap=40)
+    assert comp_resp.chosen_strategy == ChunkingStrategy.RECURSIVE_CHARACTER.value
+    assert comp_resp.recursive["total_chunks"] >= 1

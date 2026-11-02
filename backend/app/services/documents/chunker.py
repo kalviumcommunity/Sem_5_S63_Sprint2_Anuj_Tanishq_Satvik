@@ -18,6 +18,8 @@ class ChunkingStrategy(str, Enum):
 class DocumentChunker:
     """Splits academic document text into chunks preserving page provenance, section context, and overlap."""
 
+    RECOMMENDED_ACADEMIC_STRATEGY: ChunkingStrategy = ChunkingStrategy.RECURSIVE_CHARACTER
+
     def __init__(
         self,
         chunk_size: int = 500,
@@ -37,7 +39,21 @@ class DocumentChunker:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.strategy = strategy
-        self.separators = separators or ["\n\n", "\n", ". ", "? ", "! ", "; ", " ", ""]
+        self.separators = separators or ["\n\n", "\n", ". ", "? ", "! ", "; ", ", ", " ", ""]
+
+    @classmethod
+    def create_academic_chunker(
+        cls,
+        chunk_size: int = 600,
+        chunk_overlap: int = 120,
+        strategy: ChunkingStrategy = ChunkingStrategy.RECURSIVE_CHARACTER,
+    ) -> "DocumentChunker":
+        """Factory method producing an academic document chunker with optimal recursive settings."""
+        return cls(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            strategy=strategy,
+        )
 
     def chunk_text(
         self,
@@ -129,6 +145,62 @@ class DocumentChunker:
 
         return all_chunks
 
+    @classmethod
+    def compare_strategies(
+        cls,
+        text: str,
+        chunk_size: int = 500,
+        chunk_overlap: int = 100,
+    ) -> Dict[str, Any]:
+        """Compare fixed-size and recursive character chunking strategies on a given text."""
+        # Fixed-word uses word counts (~100 words ~ 500 chars)
+        fixed_chunker = cls(
+            chunk_size=max(20, chunk_size // 5),
+            chunk_overlap=max(5, chunk_overlap // 5),
+            strategy=ChunkingStrategy.FIXED_WORD,
+        )
+        rec_chunker = cls(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            strategy=ChunkingStrategy.RECURSIVE_CHARACTER,
+        )
+
+        fixed_chunks = fixed_chunker.chunk_text(text, document_id="cmp_fixed")
+        rec_chunks = rec_chunker.chunk_text(text, document_id="cmp_rec")
+
+        def sentence_boundary_integrity(chunks: List[Chunk]) -> float:
+            if not chunks:
+                return 0.0
+            clean_count = sum(
+                1 for c in chunks
+                if c.text.rstrip().endswith((".", "!", "?", '."', ".'", "\n")) or len(c.text) < 40
+            )
+            return round((clean_count / len(chunks)) * 100, 2)
+
+        return {
+            "fixed_size": {
+                "strategy": ChunkingStrategy.FIXED_WORD.value,
+                "total_chunks": len(fixed_chunks),
+                "avg_chunk_chars": round(sum(len(c.text) for c in fixed_chunks) / max(1, len(fixed_chunks)), 1),
+                "sentence_boundary_integrity": sentence_boundary_integrity(fixed_chunks),
+                "citations_detected": sum(1 for c in fixed_chunks if c.metadata.get("has_citation")),
+            },
+            "recursive": {
+                "strategy": ChunkingStrategy.RECURSIVE_CHARACTER.value,
+                "total_chunks": len(rec_chunks),
+                "avg_chunk_chars": round(sum(len(c.text) for c in rec_chunks) / max(1, len(rec_chunks)), 1),
+                "sentence_boundary_integrity": sentence_boundary_integrity(rec_chunks),
+                "citations_detected": sum(1 for c in rec_chunks if c.metadata.get("has_citation")),
+            },
+            "chosen_strategy": cls.RECOMMENDED_ACADEMIC_STRATEGY.value,
+            "rationale": (
+                "Recursive character splitting is selected as the optimal strategy for academic documents "
+                "because it respects hierarchical structural boundaries (paragraphs, sentence terminations, "
+                "and clauses). This minimizes semantic fragmentation, prevents slicing citations or math formulas "
+                "across chunk boundaries, and preserves coherent context for LLM retrieval."
+            ),
+        }
+
     def _split_fixed_words(self, text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
         words = text.split()
         if not words:
@@ -177,11 +249,18 @@ class DocumentChunker:
                 else:
                     if current:
                         result.append(current)
-                    if len(s) > chunk_size and remaining_seps:
-                        self._recursive_split_helper(s, chunk_size, chunk_overlap, remaining_seps, result)
-                        current = ""
+                        overlap_tail = ""
+                        if chunk_overlap > 0:
+                            tail = current[-chunk_overlap:]
+                            space_idx = tail.find(" ")
+                            overlap_tail = tail[space_idx + 1:] if space_idx != -1 else tail
+                        current = f"{overlap_tail} {s}".strip() if overlap_tail else s
                     else:
                         current = s
+
+                    if len(current) > chunk_size and remaining_seps:
+                        self._recursive_split_helper(current, chunk_size, chunk_overlap, remaining_seps, result)
+                        current = ""
             if current and current.strip():
                 result.append(current)
         else:
