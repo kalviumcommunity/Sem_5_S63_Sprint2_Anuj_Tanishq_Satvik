@@ -204,6 +204,23 @@ Similarity search
 Metadata filtering
 ```
 
+Uploaded chunks are embedded and indexed with their source metadata. Query
+embeddings use the same configured service and retrieve those records before
+the RAG pipeline builds its cited context. The offline mock hashes words and
+is only a lexical fallback; semantic similarity requires the configured
+embedding provider.
+
+Run `python -m backend.app.services.embeddings.demo` to inspect vector
+dimensions and related/unrelated similarity. With the offline fallback, sample
+output is:
+
+``` text
+mode: offline lexical mock (not semantic)
+vector dimensions: [1536, 1536, 1536]
+related cosine similarity: 0.7071
+unrelated cosine similarity: 0.0000
+```
+
 ## 4. Document Processing
 
 ``` text

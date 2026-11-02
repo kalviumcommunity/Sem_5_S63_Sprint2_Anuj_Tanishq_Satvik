@@ -100,6 +100,12 @@ class InMemoryVectorStore:
             raise ValueError(
                 f"Number of chunks ({len(chunks)}) does not match number of vectors ({len(vectors)})"
             )
+        if vectors:
+            dimension = len(vectors[0])
+            if not dimension or any(len(vector) != dimension for vector in vectors):
+                raise ValueError("Chunk embeddings must have one consistent, non-zero dimension.")
+            if any(not math.isfinite(value) for vector in vectors for value in vector):
+                raise ValueError("Chunk embeddings must contain only finite values.")
 
         added = 0
         for chunk, vec in zip(chunks, vectors):
