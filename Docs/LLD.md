@@ -121,6 +121,12 @@ created_at
 The relationship between chunk, embedding, document, and citation must
 always be preserved.
 
+Chunk size and overlap are measured in tokens using the shared tokenizer.
+`CHUNK_SIZE`, `CHUNK_OVERLAP`, and `MAX_CHUNK_TOKENS` configure the defaults
+and hard per-chunk limit. The recursive strategy prefers sentence and
+paragraph boundaries, and overlap carries adjacent context without crossing
+page boundaries.
+
 ### Conversation
 
 ``` text
@@ -198,6 +204,23 @@ Similarity search
 Metadata filtering
 ```
 
+Uploaded chunks are embedded and indexed with their source metadata. Query
+embeddings use the same configured service and retrieve those records before
+the RAG pipeline builds its cited context. The offline mock hashes words and
+is only a lexical fallback; semantic similarity requires the configured
+embedding provider.
+
+Run `python -m backend.app.services.embeddings.demo` to inspect vector
+dimensions and related/unrelated similarity. With the offline fallback, sample
+output is:
+
+``` text
+mode: offline lexical mock (not semantic)
+vector dimensions: [1536, 1536, 1536]
+related cosine similarity: 0.7071
+unrelated cosine similarity: 0.0000
+```
+
 ## 4. Document Processing
 
 ``` text
@@ -223,13 +246,16 @@ Complete
 Recommended document states:
 
 ``` text
-UPLOADED
+PENDING
 PROCESSING
-EMBEDDING
-INDEXING
-INDEXED
+COMPLETED
 FAILED
 ```
+
+The batch upload endpoint processes files independently. SHA-256 reservations
+prevent duplicate processing within the running in-memory repository. Each
+successful document retains its extracted PDF page count, including blank
+pages, while chunks are created only for pages with text.
 
 ## 5. Embedding Service
 
@@ -261,14 +287,39 @@ Vector Search
 
 ## 6. Retrieval
 
-``` python
+### Similarity vs. Distance
+- **Similarity**: Measures semantic closeness; higher scores indicate better alignment.
+- **Distance**: Measures geometric separation (e.g., Euclidean distance); lower values indicate closer matches.
+- Vector search normalizes candidate retrieval so that the best matching chunks are placed at the top.
+
+### Cosine Similarity Calculation
+Cosine similarity compares vector direction rather than raw vector magnitude, making it ideal for normalized text embeddings:
+
+```python
+from numpy import dot
+from numpy.linalg import norm
+
+def cosine_similarity(a, b):
+    denom = norm(a) * norm(b)
+    return float(dot(a, b) / denom) if denom != 0.0 else 0.0
+```
+
+### Query & Chunk Ranking Workflow
+1. **Embed Query**: Compute query embedding using the same model configured for stored document chunks.
+2. **Score Against Chunks**: Compute cosine similarity between the query embedding and each candidate chunk embedding.
+3. **Rank Descending**: Sort chunks from highest similarity score to lowest.
+4. **Context Selection**: The top-k candidates are fed downstream into the RAG pipeline as context.
+5. **High Score Interpretation**: A high similarity score confirms embedding proximity, not factual accuracy or freshness; grounding checks and citations validate the context before answer generation.
+
+```python
 def retrieve(query, top_k=10, filters=None):
     query_vector = embedding_service.embed(query)
 
     candidates = vector_store.search(
         vector=query_vector,
         top_k=top_k,
-        filters=filters
+        filters=filters,
+        metric="cosine"
     )
 
     ranked = reranker.rank(

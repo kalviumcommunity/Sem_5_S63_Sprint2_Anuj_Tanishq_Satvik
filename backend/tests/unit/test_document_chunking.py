@@ -1,5 +1,7 @@
 """Unit tests for Concept #11: Document Chunking & Text Splitting."""
 
+from __future__ import annotations
+
 import asyncio
 import io
 import pytest
@@ -10,11 +12,15 @@ from backend.app.api.v1.documents import (
     compare_chunking_strategies,
     get_document_chunks,
     upload_document,
+    upload_documents,
+    document_repository,
 )
-from backend.app.models.document import DocumentPage, DocumentType, LoadedDocument
+from backend.app.models.document import DocumentPage, DocumentType, LoadedDocument, ProcessingStatus
 from backend.app.services.documents.chunker import ChunkingStrategy, DocumentChunker
 from backend.app.services.documents.loader import DocumentLoader
-from backend.app.services.retrieval.search import InMemoryVectorStore
+from backend.app.services.retrieval.search import InMemoryVectorStore, get_vector_store
+from backend.app.services.embeddings.service import get_embedding_service
+from backend.app.services.tokenizer import default_tokenizer
 
 
 def _generate_multipage_pdf(
@@ -101,31 +107,68 @@ def test_chunk_text_single_chunk_under_limit():
     assert chunks[0].section == "abstract"
     assert chunks[0].text == text
     assert chunks[0].chunk_index == 0
-    assert chunks[0].token_count == len(text.split())
+    assert chunks[0].token_count == default_tokenizer.count_tokens(text)
 
 
-def test_fixed_word_chunking_with_overlap():
-    """Verify fixed-word chunking preserves configured overlap between adjacent chunks."""
-    words = [f"word_{i}" for i in range(1, 26)]
-    text = " ".join(words)
+def test_recursive_token_chunking_with_overlap():
+    """Verify token-bounded chunking preserves overlap with configurable token values."""
+    text = " ".join(["Transformers use attention to process all positions in a sequence."] * 8)
 
-    chunker = DocumentChunker(chunk_size=10, chunk_overlap=3, strategy=ChunkingStrategy.FIXED_WORD)
+    chunker = DocumentChunker(
+        chunk_size=20,
+        chunk_overlap=5,
+        strategy=ChunkingStrategy.RECURSIVE_CHARACTER,
+    )
     chunks = chunker.chunk_text(text, document_id="doc-1")
 
-    assert len(chunks) >= 3
-    # First chunk has 10 words: word_1 .. word_10
-    c0_words = chunks[0].text.split()
-    assert len(c0_words) == 10
-    assert c0_words[0] == "word_1"
-    assert c0_words[-1] == "word_10"
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert chunk.token_count == default_tokenizer.count_tokens(chunk.text)
+        assert chunk.token_count <= 20
+        assert chunk.metadata["token_count"] == chunk.token_count
 
-    # Step is 10 - 3 = 7. Second chunk starts at word_8
-    c1_words = chunks[1].text.split()
-    assert c1_words[0] == "word_8"
-    assert c1_words[1] == "word_9"
-    assert c1_words[2] == "word_10"
-    # Overlap contains word_8, word_9, word_10
-    assert set(c0_words[-3:]) == set(c1_words[:3])
+    previous_words = chunks[0].text.split()
+    current_words = chunks[1].text.split()
+    assert any(
+        " ".join(previous_words[-count:]) in " ".join(current_words[:count + 2])
+        for count in range(1, min(5, len(previous_words)) + 1)
+    )
+
+
+def test_token_chunk_sizes_and_overlap_are_configurable():
+    """Verify different token budgets change chunking and both retain page provenance."""
+    text = " ".join(
+        [
+            "First paragraph explains token-aware chunking and source page tracking.",
+            "Second paragraph describes overlap between adjacent research chunks.",
+            "Third paragraph preserves sentence boundaries and citations.",
+            "Fourth paragraph tests a smaller token window.",
+        ]
+    )
+    small = DocumentChunker(chunk_size=12, chunk_overlap=3)
+    large = DocumentChunker(chunk_size=30, chunk_overlap=8)
+    no_overlap = DocumentChunker(chunk_size=12, chunk_overlap=0)
+
+    small_chunks = small.chunk_text(text, document_id="doc-size", page_number=3, section="methods")
+    large_chunks = large.chunk_text(text, document_id="doc-size", page_number=3, section="methods")
+    no_overlap_chunks = no_overlap.chunk_text(text, document_id="doc-size", page_number=3, section="methods")
+
+    assert len(small_chunks) > len(large_chunks)
+    assert "research chunks." in small_chunks[2].text
+    assert "research chunks." not in no_overlap_chunks[2].text
+    assert "research chunks." in large_chunks[1].text
+    for chunk in small_chunks:
+        assert chunk.token_count <= 12
+        assert chunk.page_number == 3
+        assert chunk.section == "methods"
+    for chunk in large_chunks:
+        assert chunk.token_count <= 30
+        assert chunk.page_number == 3
+
+
+def test_chunker_enforces_configured_maximum_token_limit():
+    with pytest.raises(ValueError, match="cannot exceed max_chunk_tokens"):
+        DocumentChunker(chunk_size=21, chunk_overlap=2, max_chunk_tokens=20)
 
 
 def test_recursive_character_chunking():
@@ -143,9 +186,9 @@ def test_recursive_character_chunking():
     )
     chunks = chunker.chunk_text(text, document_id="doc-rec")
 
-    assert len(chunks) >= 3
+    assert len(chunks) == 1
     for chunk in chunks:
-        assert len(chunk.text) <= 150
+        assert chunk.token_count <= 110
         assert chunk.metadata["strategy"] == ChunkingStrategy.RECURSIVE_CHARACTER.value
 
 
@@ -343,7 +386,8 @@ def test_chunk_metadata_tracks_multiple_documents_through_retrieval():
         assert result.text == original.text
 
 
-def test_document_upload_api_pipeline_integration():
+@pytest.mark.asyncio
+async def test_document_upload_api_pipeline_integration():
     """Verify document upload endpoint extracts, chunks, and persists academic PDF documents."""
     pdf_pages = [
         "Abstract: Deep residual networks ease the training of substantially deeper neural networks [1].",
@@ -361,8 +405,9 @@ def test_document_upload_api_pipeline_integration():
     )
 
     # 1. Test upload and pipeline chunking
-    response = upload_document(file=upload_file, chunk_size=200, chunk_overlap=40)
-    assert response.status == "processed"
+    response = await upload_document(file=upload_file, chunk_size=200, chunk_overlap=40)
+    assert response.status == ProcessingStatus.COMPLETED.value
+    assert response.duplicate is False
     assert response.filename == "resnet_survey.pdf"
     assert response.chunks >= 3
     doc_id = response.document_id
@@ -382,9 +427,79 @@ def test_document_upload_api_pipeline_integration():
         assert c.document_title == "Deep Residual Networks"
         assert c.author == "Kaiming He"
         assert c.metadata["filename"] == "resnet_survey.pdf"
+        assert c.text.strip()
+        assert c.page_number in {1, 2, 3}
+
+    embedding_service = get_embedding_service()
+    query_vector = await embedding_service.embed_text("Deep residual networks")
+    indexed_chunks = get_vector_store().search(
+        query_vector,
+        top_k=response.chunks,
+        score_threshold=0.0,
+        filters={"document_id": doc_id},
+    )
+    assert {chunk.page_number for chunk in indexed_chunks} == {1, 2, 3}
+    assert all(chunk.document_title == "Deep Residual Networks" for chunk in indexed_chunks)
+
+    duplicate_file = UploadFile(file=io.BytesIO(pdf_bytes), filename="same_content.pdf")
+    duplicate_response = await upload_document(file=duplicate_file, chunk_size=200, chunk_overlap=40)
+    assert duplicate_response.duplicate is True
+    assert duplicate_response.document_id == doc_id
+    assert duplicate_response.chunks == response.chunks
 
     # 3. Test strategy comparison endpoint
     comp_file = UploadFile(file=io.BytesIO(pdf_bytes), filename="resnet_survey.pdf")
     comp_resp = compare_chunking_strategies(file=comp_file, chunk_size=200, chunk_overlap=40)
     assert comp_resp.chosen_strategy == ChunkingStrategy.RECURSIVE_CHARACTER.value
     assert comp_resp.recursive["total_chunks"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_batch_document_ingestion_tracks_status_and_isolates_failures():
+    """Process multiple PDFs, skip duplicate content, and retain failed status per bad file."""
+    pdf_a = _generate_multipage_pdf([
+        "Paper A page one contains the study abstract and hypothesis.",
+        "Paper A page two contains methodology and evaluation results.",
+    ])
+    pdf_b = _generate_multipage_pdf([
+        "Paper B page one introduces a separate research question.",
+        "Paper B page two reports independent experimental findings.",
+    ])
+    responses = await upload_documents(
+        files=[
+            UploadFile(file=io.BytesIO(pdf_a), filename="study_a.pdf"),
+            UploadFile(file=io.BytesIO(pdf_b), filename="study_b.pdf"),
+            UploadFile(file=io.BytesIO(pdf_a), filename="study_a_copy.pdf"),
+            UploadFile(file=io.BytesIO(b"%PDF-1.4 GARBAGE CORRUPTED"), filename="corrupt.pdf"),
+            UploadFile(file=io.BytesIO(b" \n\t "), filename="empty.txt"),
+        ],
+        chunk_size=40,
+        chunk_overlap=5,
+    )
+
+    assert [response.status for response in responses] == [
+        ProcessingStatus.COMPLETED.value,
+        ProcessingStatus.COMPLETED.value,
+        ProcessingStatus.COMPLETED.value,
+        ProcessingStatus.FAILED.value,
+        ProcessingStatus.FAILED.value,
+    ]
+    assert [response.duplicate for response in responses] == [False, False, True, False, False]
+    assert responses[0].document_id == responses[2].document_id
+
+    for result in (responses[0], responses[1]):
+        assert result.chunks > 0
+        stored = document_repository.get_by_id(result.document_id)
+        assert stored is not None
+        assert stored.processing_status == ProcessingStatus.COMPLETED
+        chunks = get_document_chunks(result.document_id)
+        assert len(chunks) == result.chunks
+        assert {chunk.page_number for chunk in chunks} == {1, 2}
+        assert all(chunk.text.strip() and chunk.document_id == result.document_id for chunk in chunks)
+
+    for result in responses[3:]:
+        stored = document_repository.get_by_id(result.document_id)
+        assert stored is not None
+        assert stored.processing_status == ProcessingStatus.FAILED
+        assert result.chunks == 0
+        assert result.message

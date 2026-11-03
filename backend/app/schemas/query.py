@@ -9,5 +9,5 @@ class QueryRequest(BaseModel):
 
     query: str = Field(..., min_length=1, description="Student's research question")
     conversation_id: Optional[str] = Field(None, description="Optional conversation ID for context")
-    top_k: Optional[int] = Field(None, description="Number of source chunks to retrieve")
+    top_k: Optional[int] = Field(None, ge=1, description="Number of source chunks to retrieve")
     filters: Optional[Dict[str, Any]] = Field(None, description="Metadata filters (course, author, document_type)")

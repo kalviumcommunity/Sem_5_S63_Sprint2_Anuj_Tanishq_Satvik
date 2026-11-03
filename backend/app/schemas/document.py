@@ -13,6 +13,7 @@ class DocumentUploadResponse(BaseModel):
     status: str
     chunks: int
     message: str
+    duplicate: bool = False
 
 
 class DocumentInfo(BaseModel):

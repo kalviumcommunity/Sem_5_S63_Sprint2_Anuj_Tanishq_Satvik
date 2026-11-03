@@ -4,6 +4,7 @@ from backend.app.models.document import Document, ProcessingStatus
 from backend.app.models.chunk import Chunk
 from backend.app.models.citation import Citation
 from backend.app.models.conversation import Conversation, Message, MessageRole
+from backend.app.repositories.documents import DocumentRepository
 
 
 def test_document_model_creation():
@@ -16,6 +17,27 @@ def test_document_model_creation():
     assert doc.id is not None
     assert doc.title == "Deep Learning Survey"
     assert doc.processing_status == ProcessingStatus.UPLOADED
+    assert {status.value for status in ProcessingStatus} == {
+        "pending",
+        "processing",
+        "completed",
+        "failed",
+    }
+
+
+def test_document_repository_reserves_file_hash_once():
+    repository = DocumentRepository()
+    original, created = repository.reserve(
+        Document(title="Original", filename="paper.pdf", file_hash="same-content")
+    )
+    duplicate, duplicate_created = repository.reserve(
+        Document(title="Copy", filename="copy.pdf", file_hash="same-content")
+    )
+
+    assert created is True
+    assert duplicate_created is False
+    assert duplicate.id == original.id
+    assert repository.get_by_hash("same-content") == original
 
 
 def test_chunk_model_creation():

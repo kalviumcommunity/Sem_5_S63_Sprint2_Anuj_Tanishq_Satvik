@@ -182,8 +182,10 @@ The first version focuses on the core research experience:
 4. **Configure environment variables**:
    ```bash
    cp .env.example .env
-   # Edit .env with your LLM/Embedding API keys if available
+   # Set EMBEDDING_API_KEY to your provider key; keep .env out of version control
    ```
+
+Document chunks and research questions use the configured embedding provider. `EMBEDDING_BATCH_SIZE` limits texts per API request; the development mock remains available when no key is configured.
 
 ### Running the Backend Server
 ```bash
@@ -198,6 +200,16 @@ Execute the full test suite with pytest:
 ```bash
 pytest
 ```
+
+### Running Retrieval & Embedding Demos
+- **Vector Similarity & Ranking Demo**:
+  ```bash
+  python scripts/vector_similarity_demo.py
+  ```
+- **Embedding Dimensions & Similarity Demo**:
+  ```bash
+  python -m backend.app.services.embeddings.demo
+  ```
 
 ---
 
