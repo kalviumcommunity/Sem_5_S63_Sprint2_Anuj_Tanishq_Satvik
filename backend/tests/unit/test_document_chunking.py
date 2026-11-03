@@ -1,5 +1,7 @@
 """Unit tests for Concept #11: Document Chunking & Text Splitting."""
 
+from __future__ import annotations
+
 import asyncio
 import io
 import pytest

@@ -201,6 +201,16 @@ Execute the full test suite with pytest:
 pytest
 ```
 
+### Running Retrieval & Embedding Demos
+- **Vector Similarity & Ranking Demo**:
+  ```bash
+  python scripts/vector_similarity_demo.py
+  ```
+- **Embedding Dimensions & Similarity Demo**:
+  ```bash
+  python -m backend.app.services.embeddings.demo
+  ```
+
 ---
 
 ## 👥 Team & GitHub Workflow

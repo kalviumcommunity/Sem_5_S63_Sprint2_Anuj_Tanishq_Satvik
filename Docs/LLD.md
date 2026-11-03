@@ -287,14 +287,39 @@ Vector Search
 
 ## 6. Retrieval
 
-``` python
+### Similarity vs. Distance
+- **Similarity**: Measures semantic closeness; higher scores indicate better alignment.
+- **Distance**: Measures geometric separation (e.g., Euclidean distance); lower values indicate closer matches.
+- Vector search normalizes candidate retrieval so that the best matching chunks are placed at the top.
+
+### Cosine Similarity Calculation
+Cosine similarity compares vector direction rather than raw vector magnitude, making it ideal for normalized text embeddings:
+
+```python
+from numpy import dot
+from numpy.linalg import norm
+
+def cosine_similarity(a, b):
+    denom = norm(a) * norm(b)
+    return float(dot(a, b) / denom) if denom != 0.0 else 0.0
+```
+
+### Query & Chunk Ranking Workflow
+1. **Embed Query**: Compute query embedding using the same model configured for stored document chunks.
+2. **Score Against Chunks**: Compute cosine similarity between the query embedding and each candidate chunk embedding.
+3. **Rank Descending**: Sort chunks from highest similarity score to lowest.
+4. **Context Selection**: The top-k candidates are fed downstream into the RAG pipeline as context.
+5. **High Score Interpretation**: A high similarity score confirms embedding proximity, not factual accuracy or freshness; grounding checks and citations validate the context before answer generation.
+
+```python
 def retrieve(query, top_k=10, filters=None):
     query_vector = embedding_service.embed(query)
 
     candidates = vector_store.search(
         vector=query_vector,
         top_k=top_k,
-        filters=filters
+        filters=filters,
+        metric="cosine"
     )
 
     ranked = reranker.rank(

@@ -6,6 +6,7 @@ from backend.app.services.retrieval.search import (
     cosine_similarity,
     dot_product,
     euclidean_distance,
+    rank_chunks,
     InMemoryVectorStore,
     get_vector_store,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "cosine_similarity",
     "dot_product",
     "euclidean_distance",
+    "rank_chunks",
     "InMemoryVectorStore",
     "get_vector_store",
     "MetadataFilter",

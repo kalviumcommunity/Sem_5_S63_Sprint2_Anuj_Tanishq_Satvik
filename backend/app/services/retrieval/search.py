@@ -2,7 +2,9 @@
 
 from enum import Enum
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Union
+from numpy import dot
+from numpy.linalg import norm
 from pydantic import BaseModel
 from backend.app.models.chunk import Chunk
 
@@ -30,30 +32,76 @@ class SearchResult(BaseModel):
     metadata: Dict[str, Any] = {}
 
 
-def cosine_similarity(v1: List[float], v2: List[float]) -> float:
-    """Calculate cosine similarity between two numeric vectors in [-1.0, 1.0]."""
-    if len(v1) != len(v2) or not v1:
+def cosine_similarity(v1: Sequence[float], v2: Sequence[float]) -> float:
+    """Calculate cosine similarity between two numeric vectors in [-1.0, 1.0].
+
+    Cosine similarity measures the cosine of the angle between two vectors,
+    focusing on direction rather than raw vector magnitude.
+    """
+    if len(v1) != len(v2) or not len(v1):
         return 0.0
-    dot = sum(a * b for a, b in zip(v1, v2))
-    norm_a = math.sqrt(sum(a * a for a in v1))
-    norm_b = math.sqrt(sum(b * b for b in v2))
-    if norm_a == 0.0 or norm_b == 0.0:
+    denom = norm(v1) * norm(v2)
+    if denom == 0.0 or not math.isfinite(denom):
         return 0.0
-    return dot / (norm_a * norm_b)
+    return float(dot(v1, v2) / denom)
 
 
-def dot_product(v1: List[float], v2: List[float]) -> float:
+def dot_product(v1: Sequence[float], v2: Sequence[float]) -> float:
     """Calculate raw dot product between two numeric vectors."""
-    if len(v1) != len(v2) or not v1:
+    if len(v1) != len(v2) or not len(v1):
         return 0.0
-    return sum(a * b for a, b in zip(v1, v2))
+    return float(dot(v1, v2))
 
 
-def euclidean_distance(v1: List[float], v2: List[float]) -> float:
+def euclidean_distance(v1: Sequence[float], v2: Sequence[float]) -> float:
     """Calculate Euclidean distance (L2 distance) between two numeric vectors."""
-    if len(v1) != len(v2) or not v1:
+    if len(v1) != len(v2) or not len(v1):
         return float("inf")
-    return math.sqrt(sum((a - b) ** 2 for a, b in zip(v1, v2)))
+    diff = norm([a - b for a, b in zip(v1, v2)])
+    return float(diff)
+
+
+def rank_chunks(
+    query_embedding: Sequence[float],
+    chunk_records: List[Dict[str, Any]],
+    metric: SimilarityMetric = SimilarityMetric.COSINE,
+    top_k: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Rank chunk records by vector similarity to a query embedding.
+
+    Each chunk record should contain an 'embedding' (or 'vector') alongside
+    arbitrary payload fields such as 'text' and 'metadata'.
+
+    Args:
+        query_embedding: The vector embedding of the user query.
+        chunk_records: A list of dicts with at least 'embedding', plus 'text', 'metadata', etc.
+        metric: SimilarityMetric to use (default: COSINE).
+        top_k: Optional limit on the number of returned chunks.
+
+    Returns:
+        List of chunk records with added 'score' field, sorted from most similar
+        to least similar.
+    """
+    ranked: List[Dict[str, Any]] = []
+    for record in chunk_records:
+        chunk_vec = record.get("embedding") if "embedding" in record else record.get("vector")
+        if chunk_vec is None:
+            continue
+        if metric == SimilarityMetric.COSINE:
+            score = cosine_similarity(query_embedding, chunk_vec)
+        elif metric == SimilarityMetric.DOT_PRODUCT:
+            score = dot_product(query_embedding, chunk_vec)
+        elif metric == SimilarityMetric.EUCLIDEAN:
+            dist = euclidean_distance(query_embedding, chunk_vec)
+            score = 1.0 / (1.0 + dist)
+        else:
+            score = cosine_similarity(query_embedding, chunk_vec)
+        ranked.append({**record, "score": score})
+
+    ranked.sort(key=lambda item: item["score"], reverse=True)
+    if top_k is not None:
+        return ranked[:top_k]
+    return ranked
 
 
 class InMemoryVectorStore:
@@ -184,6 +232,21 @@ class InMemoryVectorStore:
         # Sort descending by score
         candidates.sort(key=lambda x: x.score, reverse=True)
         return candidates[:top_k]
+
+    def rank_chunks(
+        self,
+        query_vector: Sequence[float],
+        top_k: Optional[int] = None,
+        metric: SimilarityMetric = SimilarityMetric.COSINE,
+    ) -> List[SearchResult]:
+        """Rank all stored chunk records against query_vector from most to least similar."""
+        limit = top_k if top_k is not None else len(self._items)
+        return self.search(
+            query_vector=list(query_vector),
+            top_k=max(limit, 1),
+            score_threshold=-1.0,
+            metric=metric,
+        )
 
     def delete(self, chunk_id: str) -> bool:
         """Remove a single chunk from the store."""
