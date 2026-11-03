@@ -1,10 +1,12 @@
 """Tests for embedding-backed retrieval in the query API."""
 
 import pytest
+from fastapi import HTTPException
 
 from backend.app.api.v1 import query as query_api
 from backend.app.schemas.query import QueryRequest
 from backend.app.schemas.response import QueryResponse
+from backend.app.services.embeddings.service import EmbeddingServiceError
 from backend.app.services.retrieval.search import SearchResult
 
 
@@ -49,3 +51,21 @@ async def test_query_embeds_text_and_passes_filtered_vector_results_to_rag(monke
     assert observed["search"]["top_k"] == 3
     assert observed["search"]["filters"] == {"course": "CS"}
     assert observed["answer_candidates"] == [candidate]
+
+
+@pytest.mark.asyncio
+async def test_query_hides_embedding_provider_error_details(monkeypatch):
+    class EmbeddingService:
+        dimension = 3
+
+        async def embed_text(self, text):
+            raise EmbeddingServiceError("provider response contained secret-token")
+
+    monkeypatch.setattr(query_api, "get_embedding_service", lambda: EmbeddingService())
+
+    with pytest.raises(HTTPException) as error:
+        await query_api.query_academic_sources(QueryRequest(query="question"))
+
+    assert error.value.status_code == 502
+    assert error.value.detail == "Embedding provider request failed."
+    assert "secret-token" not in error.value.detail

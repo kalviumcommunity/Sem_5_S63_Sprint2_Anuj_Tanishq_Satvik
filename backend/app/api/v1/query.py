@@ -4,7 +4,12 @@ from fastapi import APIRouter, HTTPException
 from backend.app.core.config import settings
 from backend.app.schemas.query import QueryRequest
 from backend.app.schemas.response import QueryResponse
-from backend.app.services.embeddings.service import get_embedding_service, validate_embedding
+from backend.app.core.logging import logger
+from backend.app.services.embeddings.service import (
+    EmbeddingServiceError,
+    get_embedding_service,
+    validate_embedding,
+)
 from backend.app.services.rag.pipeline import RAGPipeline
 from backend.app.services.retrieval.search import get_vector_store
 
@@ -30,5 +35,8 @@ async def query_academic_sources(request: QueryRequest) -> QueryResponse:
             candidates=candidates,
             conversation_id=request.conversation_id,
         )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except EmbeddingServiceError:
+        logger.warning("Embedding provider failed while processing a query.")
+        raise HTTPException(status_code=502, detail="Embedding provider request failed.") from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Unable to process query.") from None

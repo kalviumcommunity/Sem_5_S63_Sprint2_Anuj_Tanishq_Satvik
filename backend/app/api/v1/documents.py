@@ -25,7 +25,11 @@ from backend.app.services.documents.exceptions import (
     EmptyDocumentError,
 )
 from backend.app.services.documents.loader import DocumentLoader
-from backend.app.services.embeddings.service import get_embedding_service, validate_embedding
+from backend.app.services.embeddings.service import (
+    EmbeddingServiceError,
+    get_embedding_service,
+    validate_embedding,
+)
 from backend.app.services.retrieval.search import get_vector_store
 
 router = APIRouter(tags=["Documents"])
@@ -190,6 +194,16 @@ async def _process_upload(
             status=doc_record.processing_status.value,
             chunks=len(chunks),
             message=f"Processed {len(chunks)} chunks from {loaded_doc.page_count} pages.",
+        )
+    except EmbeddingServiceError:
+        doc_record.processing_status = ProcessingStatus.FAILED
+        document_repository.save(doc_record)
+        return DocumentUploadResponse(
+            document_id=doc_record.id,
+            filename=file.filename,
+            status=doc_record.processing_status.value,
+            chunks=0,
+            message="Embedding provider request failed.",
         )
     except (EmptyDocumentError, CorruptedDocumentError, DocumentIntakeError, ValueError) as exc:
         doc_record.processing_status = ProcessingStatus.FAILED
