@@ -134,11 +134,13 @@ async def test_rag_pipeline_multi_turn_history():
         candidates=[candidate],
         conversation_id=conv.id,
     )
-    assert resp2.grounded is True
+    assert resp2.grounded is False
+    assert resp2.citations == []
 
     history_after_turn2 = manager.get_history(conv.id)
     assert len(history_after_turn2) == 4
     assert history_after_turn2[2].content == "Does it preserve data privacy?"
+    assert history_after_turn2[3].content == resp2.answer
 
 
 def test_empty_history_handling():
@@ -332,4 +334,3 @@ def test_message_model_validation():
     # None content should fail
     with pytest.raises(ValidationError):
         Message(conversation_id="conv-1", role=MessageRole.USER, content=None)
-

@@ -51,6 +51,8 @@ class EmbeddingServiceInterface(ABC):
 class MockEmbeddingService(EmbeddingServiceInterface):
     """Deterministic lexical embedding for offline development, CI, and testing."""
 
+    uses_mock_embeddings = True
+
     def __init__(self, dimension: int = 1536):
         self._dimension = dimension
 
@@ -90,6 +92,14 @@ class OpenAIEmbeddingService(EmbeddingServiceInterface):
         self.model = model
         self._dimension = dimension
         self.batch_size = batch_size
+
+    @property
+    def uses_mock_embeddings(self) -> bool:
+        return (
+            not self.api_key
+            or self.api_key.startswith("your-")
+            or "placeholder" in self.api_key
+        )
 
     @property
     def dimension(self) -> int:
@@ -192,6 +202,10 @@ class CachedEmbeddingService(EmbeddingServiceInterface):
     @property
     def dimension(self) -> int:
         return self.base_service.dimension
+
+    @property
+    def uses_mock_embeddings(self) -> bool:
+        return bool(getattr(self.base_service, "uses_mock_embeddings", False))
 
     async def embed_text(self, text: str) -> List[float]:
         cached = self.cache.get(text, model_or_dim=self._cache_model)

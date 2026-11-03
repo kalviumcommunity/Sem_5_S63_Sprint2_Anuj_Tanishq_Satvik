@@ -1,5 +1,6 @@
 """Citation validation and attribution service."""
 
+import re
 from typing import List
 from backend.app.schemas.response import CitationItem
 from backend.app.services.retrieval.search import SearchResult
@@ -20,7 +21,21 @@ class CitationService:
         if parsed_response.is_refusal or not retrieved_chunks:
             return citations
 
+        answer_sentences = [
+            " ".join(sentence.split())
+            for sentence in re.split(r"(?<=[.!?])\s+", parsed_response.answer)
+            if sentence.strip()
+        ]
         for chunk in retrieved_chunks:
+            normalized_chunk = " ".join(chunk.text.split())
+            evidence_snippet = next(
+                (
+                    sentence
+                    for sentence in answer_sentences
+                    if sentence.casefold() in normalized_chunk.casefold()
+                ),
+                chunk.text[:500].strip(),
+            )
             citations.append(
                 CitationItem(
                     document_id=chunk.document_id,
@@ -29,7 +44,13 @@ class CitationService:
                     chunk_id=chunk.chunk_id,
                     section=chunk.section,
                     relevance_score=chunk.score,
+                    similarity_score=(
+                        chunk.similarity_score
+                        if chunk.similarity_score is not None
+                        else chunk.score
+                    ),
                     citation_text=f"{chunk.document_title}, Page {chunk.page_number}",
+                    snippet=evidence_snippet,
                 )
             )
 

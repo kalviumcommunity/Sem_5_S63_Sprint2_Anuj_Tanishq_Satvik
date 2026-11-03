@@ -27,6 +27,7 @@ class SearchResult(BaseModel):
     chunk_index: int = 0
     section: Optional[str] = None
     score: float = 0.0
+    similarity_score: Optional[float] = None
     metadata: Dict[str, Any] = {}
 
 
@@ -173,6 +174,7 @@ class InMemoryVectorStore:
                 chunk_index=item["chunk_index"],
                 section=item["section"],
                 score=round(score, 4),
+                similarity_score=round(score, 4),
                 metadata=item["metadata"],
             )
             candidates.append(res)
