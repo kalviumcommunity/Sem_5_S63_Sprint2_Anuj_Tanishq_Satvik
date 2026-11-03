@@ -11,6 +11,7 @@ from fastapi import UploadFile
 from backend.app.api.v1.documents import (
     compare_chunking_strategies,
     get_document_chunks,
+    get_document_file,
     upload_document,
     upload_documents,
     document_repository,
@@ -411,6 +412,10 @@ async def test_document_upload_api_pipeline_integration():
     assert response.filename == "resnet_survey.pdf"
     assert response.chunks >= 3
     doc_id = response.document_id
+    pdf_response = get_document_file(doc_id)
+    assert pdf_response.body == pdf_bytes
+    assert pdf_response.media_type == "application/pdf"
+    assert pdf_response.headers["content-disposition"].startswith("inline;")
 
     # 2. Test chunk retrieval
     retrieved_chunks = get_document_chunks(document_id=doc_id)

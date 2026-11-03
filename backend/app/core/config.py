@@ -73,8 +73,10 @@ class Settings(BaseSettings):
 
     # Retrieval & Guardrails
     TOP_K_RETRIEVAL: int = 10
+    MOCK_TOP_K_RETRIEVAL: int = 50
     TOP_K_RERANKED: int = 5
     SIMILARITY_THRESHOLD: float = 0.65
+    MOCK_SIMILARITY_THRESHOLD: float = 0.15
     GROUNDING_THRESHOLD: float = 0.60
     REFUSAL_MESSAGE: str = (
         "I couldn't find enough supporting information in the available academic sources to answer this reliably."

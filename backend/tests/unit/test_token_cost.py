@@ -104,7 +104,7 @@ async def test_llm_client_token_cost_integration():
 
 
 @pytest.mark.asyncio
-async def test_rag_pipeline_propagates_token_usage():
+async def test_offline_rag_pipeline_does_not_report_mock_token_usage():
     pipeline = RAGPipeline()
     candidate = SearchResult(
         chunk_id="chunk-1",
@@ -121,8 +121,5 @@ async def test_rag_pipeline_propagates_token_usage():
     )
 
     assert query_response.grounded is True
-    assert query_response.token_usage is not None
-    assert "prompt_tokens" in query_response.token_usage
-    assert "completion_tokens" in query_response.token_usage
-    assert "total_tokens" in query_response.token_usage
-    assert query_response.estimated_cost_usd is not None
+    assert query_response.token_usage is None
+    assert query_response.estimated_cost_usd is None

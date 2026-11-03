@@ -100,7 +100,9 @@ class CitationItem(BaseModel):
     chunk_id: str
     section: Optional[str] = None
     relevance_score: Optional[float] = None
+    similarity_score: Optional[float] = None
     citation_text: Optional[str] = None
+    snippet: Optional[str] = None
 
 
 class QueryResponse(BaseModel):
@@ -127,4 +129,3 @@ class HealthResponse(BaseModel):
     version: str
     environment: str
     services: Dict[str, str] = Field(default_factory=dict)
-

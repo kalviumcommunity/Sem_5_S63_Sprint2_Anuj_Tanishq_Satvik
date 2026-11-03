@@ -3,7 +3,10 @@
 import hashlib
 import os
 from typing import List
+from urllib.parse import quote
+
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 
 from backend.app.core.config import settings
 from backend.app.core.logging import logger
@@ -37,6 +40,7 @@ router = APIRouter(tags=["Documents"])
 # In-memory document and chunk repository instances
 document_repository = DocumentRepository()
 chunk_repository = ChunkRepository()
+document_files: dict[str, bytes] = {}
 
 
 @router.get("/documents", response_model=List[DocumentInfo])
@@ -188,6 +192,8 @@ async def _process_upload(
         chunk_repository.save_many(chunks)
         doc_record.processing_status = ProcessingStatus.COMPLETED
         document_repository.save(doc_record)
+        if ext == "pdf":
+            document_files[doc_record.id] = content
         return DocumentUploadResponse(
             document_id=doc_record.id,
             filename=file.filename,
@@ -278,6 +284,26 @@ def get_document(document_id: str) -> DocumentInfo:
         page_count=doc.page_count,
         processing_status=doc.processing_status.value if hasattr(doc.processing_status, "value") else str(doc.processing_status),
         uploaded_at=doc.uploaded_at,
+    )
+
+
+@router.get("/documents/{document_id}/file")
+def get_document_file(document_id: str) -> Response:
+    """Serve the original PDF inline so citation links can open at a page fragment."""
+    doc = document_repository.get_by_id(document_id)
+    content = document_files.get(document_id)
+    if not doc or doc.document_type != "pdf" or content is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Original PDF is not available.",
+        )
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(doc.filename, safe='')}",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
