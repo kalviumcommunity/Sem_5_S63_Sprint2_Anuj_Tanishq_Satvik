@@ -2,6 +2,7 @@
 
 from backend.app.services.embeddings.service import (
     EmbeddingServiceInterface,
+    EmbeddingServiceError,
     MockEmbeddingService,
     OpenAIEmbeddingService,
     CachedEmbeddingService,
@@ -12,6 +13,7 @@ from backend.app.services.embeddings.cache import EmbeddingCache
 
 __all__ = [
     "EmbeddingServiceInterface",
+    "EmbeddingServiceError",
     "MockEmbeddingService",
     "OpenAIEmbeddingService",
     "CachedEmbeddingService",

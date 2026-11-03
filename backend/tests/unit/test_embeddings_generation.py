@@ -6,6 +6,7 @@ from backend.app.services.embeddings.batcher import EmbeddingBatcher, chunk_list
 from backend.app.services.embeddings.cache import EmbeddingCache
 from backend.app.services.embeddings.service import (
     CachedEmbeddingService,
+    EmbeddingServiceError,
     MockEmbeddingService,
     OpenAIEmbeddingService,
     get_embedding_service,
@@ -68,6 +69,9 @@ def test_embedding_validation_checks_dimension_and_finite_values():
         validate_embedding([1.0], expected_dimension=2)
     with pytest.raises(ValueError, match="finite"):
         validate_embedding([float("nan")], expected_dimension=1)
+    assert MockEmbeddingService.normalize_vector([1e308, 1e308]) == pytest.approx(
+        [2**-0.5, 2**-0.5]
+    )
 
 
 @pytest.mark.asyncio
@@ -75,6 +79,8 @@ async def test_openai_embedding_sends_auth_and_preserves_input_order(monkeypatch
     observed = {}
 
     class Response:
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
@@ -108,6 +114,126 @@ async def test_openai_embedding_sends_auth_and_preserves_input_order(monkeypatch
     assert observed["headers"]["Authorization"] == "Bearer test-key"
     assert observed["payload"]["input"] == ["first", "second"]
     assert vectors == [[0.6, 0.8, 0.0], [0.0, 0.6, 0.8]]
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_splits_batches_and_preserves_input_order(monkeypatch):
+    observed_batches = []
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, texts):
+            self.texts = texts
+
+        def json(self):
+            return {
+                "data": [
+                    {
+                        "index": index,
+                        "embedding": {
+                            "first": [1.0, 0.0],
+                            "second": [0.0, 1.0],
+                            "third": [-1.0, 0.0],
+                        }[self.texts[index]],
+                    }
+                    for index in reversed(range(len(self.texts)))
+                ]
+            }
+
+    class AsyncClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            observed_batches.append(json["input"])
+            return Response(json["input"])
+
+    monkeypatch.setattr("httpx.AsyncClient", AsyncClient)
+    service = OpenAIEmbeddingService(
+        api_key="test-key",
+        model="test-model",
+        dimension=2,
+        batch_size=2,
+    )
+    vectors = await service.embed_batch(["first", "second", "third"])
+
+    assert observed_batches == [["first", "second"], ["third"]]
+    assert vectors == [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response_data",
+    [
+        [],
+        [{"index": 0, "embedding": [1.0]}],
+        [{"index": 0, "embedding": [1.0, float("nan")]}],
+        [{"index": 1, "embedding": [1.0, 0.0]}],
+    ],
+)
+async def test_openai_embedding_rejects_invalid_responses(monkeypatch, response_data):
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"data": response_data}
+
+    class AsyncClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            return Response()
+
+    monkeypatch.setattr("httpx.AsyncClient", AsyncClient)
+    service = OpenAIEmbeddingService(api_key="test-secret", model="test-model", dimension=2)
+
+    with pytest.raises(EmbeddingServiceError):
+        await service.embed_batch(["input"])
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_errors_do_not_expose_provider_body_or_key(monkeypatch):
+    class Response:
+        status_code = 401
+
+        def json(self):
+            return {"error": "test-secret is invalid"}
+
+    class AsyncClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            return Response()
+
+    monkeypatch.setattr("httpx.AsyncClient", AsyncClient)
+    service = OpenAIEmbeddingService(api_key="test-secret", model="test-model", dimension=2)
+
+    with pytest.raises(EmbeddingServiceError) as error:
+        await service.embed_text("input")
+
+    assert "test-secret" not in str(error.value)
+    assert "invalid" not in str(error.value)
 
 
 @pytest.mark.asyncio
@@ -210,6 +336,28 @@ async def test_cached_embedding_service_avoids_recalculation():
     assert len(batch_results) == 2
     assert batch_results[0] == v1
     assert cache.hits == 2
+
+
+@pytest.mark.asyncio
+async def test_cached_embeddings_are_partitioned_by_model():
+    class ModelEmbeddingService(MockEmbeddingService):
+        def __init__(self, model, vector):
+            super().__init__(dimension=2)
+            self.model = model
+            self.vector = vector
+
+        async def embed_text(self, text):
+            return self.vector
+
+        async def embed_batch(self, texts):
+            return [self.vector for _ in texts]
+
+    cache = EmbeddingCache(max_size=10)
+    service_a = CachedEmbeddingService(ModelEmbeddingService("model-a", [1.0, 0.0]), cache)
+    service_b = CachedEmbeddingService(ModelEmbeddingService("model-b", [0.0, 1.0]), cache)
+
+    assert await service_a.embed_text("same input") == [1.0, 0.0]
+    assert await service_b.embed_text("same input") == [0.0, 1.0]
 
 
 def test_get_embedding_service_factory():
